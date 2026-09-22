@@ -1,7 +1,7 @@
 .PHONY: help env fix-perms \
 	dev dev-server dev-server-detached dev-client stop-dev \
 	build build-server build-client \
-	start-server start-client \
+	start-server stop-server start-client \
 	check test health
 
 UNAME_S := $(shell uname -s)
@@ -28,7 +28,8 @@ help:
 		'    make build          build-server + build-client' \
 		'' \
 		'  Run builds:' \
-		'    make start-server   Run release server image' \
+		'    make start-server   Run release server image (Ctrl+C to stop)' \
+		'    make stop-server    Force-stop release server container' \
 		'    make start-client   Run release client binary on the host' \
 		'' \
 		'  Other:' \
@@ -121,7 +122,9 @@ build: build-server build-client
 start-server: env
 	@docker image inspect $(ASTROWAR_SERVER_IMAGE) >/dev/null 2>&1 || $(MAKE) build-server
 	-docker rm -f astrowar-server >/dev/null 2>&1 || true
-	docker run --rm --name astrowar-server \
+	@tty_flags=""; \
+	if [ -t 0 ] && [ -t 1 ]; then tty_flags="-it"; fi; \
+	docker run --rm --init --name astrowar-server $$tty_flags \
 		-p $(ASTROWAR_SERVER_PORT):8080 \
 		-e ASTROWAR_SERVER_HOST=0.0.0.0 \
 		-e ASTROWAR_SERVER_PORT=8080 \
@@ -129,6 +132,9 @@ start-server: env
 		-e ASTROWAR_ROOM_TTL_SECS \
 		-e RUST_LOG \
 		$(ASTROWAR_SERVER_IMAGE)
+
+stop-server:
+	-docker rm -f astrowar-server >/dev/null 2>&1 || true
 
 start-client: env
 	@test -x dist/astrowar || { echo "Missing dist/astrowar. Run: make build-client"; exit 1; }
