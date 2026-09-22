@@ -205,10 +205,12 @@ name = "astrowar"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "futures-util",
  "net",
  "protocol",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
