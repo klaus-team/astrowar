@@ -1,4 +1,4 @@
-.PHONY: help env \
+.PHONY: help env fix-perms \
 	dev dev-server dev-server-detached dev-client stop-dev \
 	build build-server build-client \
 	start-server start-client \
@@ -33,6 +33,7 @@ help:
 		'' \
 		'  Other:' \
 		'    make env            Create .env from example if missing' \
+		'    make fix-perms      Fix target/.cargo-cache ownership after root Docker runs' \
 		'    make health         GET /health' \
 		'    make check          cargo check (Docker)' \
 		'    make test           cargo test protocol/server/net (Docker)'
@@ -40,6 +41,10 @@ help:
 env:
 	@test -f .env || cp .env.example .env
 	@echo "Using .env"
+
+fix-perms:
+	@chmod +x scripts/fix-docker-perms.sh
+	./scripts/fix-docker-perms.sh
 
 require-linux-client:
 ifneq ($(UNAME_S),Linux)
@@ -76,18 +81,8 @@ dev-server-detached: env stop-dev
 		cargo watch -q -c -w crates -x 'run -p astrowar-server'
 
 dev-client: env require-linux-client
-	@chmod +x scripts/docker-run.sh
-	@if [ -z "$${DISPLAY:-}" ]; then echo "DISPLAY is unset; cannot open a GUI client."; exit 1; fi
-	@xhost +local:docker >/dev/null 2>&1 || xhost +local:root >/dev/null 2>&1 || true
-	./scripts/docker-run.sh client \
-		--network host \
-		-e DISPLAY \
-		-e ASTROWAR_DEFAULT_SERVER_URL=$(ASTROWAR_DEFAULT_SERVER_URL) \
-		-e RUST_LOG \
-		-v /tmp/.X11-unix:/tmp/.X11-unix:ro \
-		$(CLIENT_DRI) \
-		-- \
-		cargo watch -q -c -w crates -x 'run -p astrowar'
+	@chmod +x scripts/docker-run.sh scripts/dev-client.sh
+	./scripts/dev-client.sh
 
 dev: env
 	$(MAKE) dev-server-detached

@@ -8,6 +8,8 @@ RUN apt-get update \
         libudev-dev \
         libwayland-dev \
         libxkbcommon-dev \
+        libxkbcommon-x11-0 \
+        libxkbcommon-x11-dev \
         libx11-dev \
         libxcursor-dev \
         libxi-dev \

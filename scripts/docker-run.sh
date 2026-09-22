@@ -27,6 +27,7 @@ DOCKER_ARGS=()
 CMD=()
 SEEN_SEPARATOR=0
 DETACHED=0
+HAS_USER=0
 for arg in "$@"; do
   if [[ "$SEEN_SEPARATOR" -eq 0 && "$arg" == "--" ]]; then
     SEEN_SEPARATOR=1
@@ -36,6 +37,9 @@ for arg in "$@"; do
     DOCKER_ARGS+=("$arg")
     if [[ "$arg" == "-d" || "$arg" == "--detach" ]]; then
       DETACHED=1
+    fi
+    if [[ "$arg" == "--user" || "$arg" == -u || "$arg" == --user=* || "$arg" == -u* ]]; then
+      HAS_USER=1
     fi
   else
     CMD+=("$arg")
@@ -47,16 +51,31 @@ if [[ ${#CMD[@]} -eq 0 ]]; then
   exit 1
 fi
 
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
+USER_ARGS=()
+if [[ "$HAS_USER" -eq 0 && "${ASTROWAR_DOCKER_AS_ROOT:-0}" != "1" ]]; then
+  USER_ARGS+=(--user "${HOST_UID}:${HOST_GID}")
+  ./scripts/fix-docker-perms.sh
+fi
+
 TTY_ARGS=()
-if [[ "$DETACHED" -eq 0 && -t 0 && -t 1 ]]; then
-  TTY_ARGS+=(-it)
+INIT_ARGS=()
+if [[ "$DETACHED" -eq 0 ]]; then
+  INIT_ARGS+=(--init)
+  if [[ -t 0 && -t 1 ]]; then
+    TTY_ARGS+=(-it)
+  fi
 fi
 
 exec docker run --rm \
   -v "$ROOT:/workspace" \
   -w /workspace \
   -e "CARGO_HOME=/workspace/.cargo-cache" \
+  -e "HOME=/workspace" \
+  "${INIT_ARGS[@]}" \
   "${TTY_ARGS[@]}" \
+  "${USER_ARGS[@]}" \
   "${DOCKER_ARGS[@]}" \
   "$IMAGE" \
   "${CMD[@]}"
