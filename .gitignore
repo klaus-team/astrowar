@@ -1,0 +1,10 @@
+/target
+**/*.rs.bk
+.env
+.DS_Store
+*.pdb
+.idea/
+.vscode/
+.cargo-cache/
+temp/
+dist/

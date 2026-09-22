@@ -1,0 +1,6 @@
+.git
+.cargo-cache
+target
+.env
+*.md
+!README.md
