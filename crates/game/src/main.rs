@@ -13,7 +13,9 @@ use playing::{
     playing_send_input, seed_ships_from_room, send_game, snapshot, spawn_playing_hud,
     sync_world_sprites, HostSim, InputThrottle, LatestState, LocalPrediction,
 };
-use protocol::{GameDurationMinutes, RoomInfo, RoomPhase};
+use protocol::{
+    GameDurationMinutes, GameMode, PlayerInfo, RoomInfo, RoomPhase, MAX_PLAYERS,
+};
 use game_sync::GameMessage;
 
 fn main() {
@@ -43,12 +45,14 @@ fn main() {
         .init_state::<AppState>()
         .add_systems(Startup, (setup_board_camera, setup_net_bridge))
         .add_systems(OnEnter(AppState::MainMenu), spawn_main_menu)
+        .add_systems(OnEnter(AppState::SoloSetup), spawn_solo_setup)
         .add_systems(OnEnter(AppState::HostSetup), spawn_host_setup)
         .add_systems(OnEnter(AppState::JoinSetup), spawn_join_setup)
         .add_systems(OnEnter(AppState::Connecting), spawn_connecting)
         .add_systems(OnEnter(AppState::Lobby), spawn_lobby)
         .add_systems(OnEnter(AppState::Playing), spawn_playing_hud)
         .add_systems(OnExit(AppState::MainMenu), cleanup_ui_root)
+        .add_systems(OnExit(AppState::SoloSetup), cleanup_ui_root)
         .add_systems(OnExit(AppState::HostSetup), cleanup_ui_root)
         .add_systems(OnExit(AppState::JoinSetup), cleanup_ui_root)
         .add_systems(OnExit(AppState::Connecting), cleanup_ui_root)
@@ -59,11 +63,13 @@ fn main() {
             (
                 update_board_viewport,
                 handle_main_menu_input.run_if(in_state(AppState::MainMenu)),
+                handle_solo_setup_input.run_if(in_state(AppState::SoloSetup)),
                 handle_host_setup_input.run_if(in_state(AppState::HostSetup)),
                 handle_join_setup_input.run_if(in_state(AppState::JoinSetup)),
                 handle_lobby_input.run_if(in_state(AppState::Lobby)),
                 handle_connecting_input.run_if(in_state(AppState::Connecting)),
                 handle_playing_input.run_if(in_state(AppState::Playing)),
+                refresh_solo_setup_ui.run_if(in_state(AppState::SoloSetup)),
                 refresh_host_setup_ui.run_if(in_state(AppState::HostSetup)),
                 refresh_join_setup_ui.run_if(in_state(AppState::JoinSetup)),
                 refresh_lobby_ui.run_if(in_state(AppState::Lobby)),
@@ -83,6 +89,7 @@ fn main() {
 enum AppState {
     #[default]
     MainMenu,
+    SoloSetup,
     HostSetup,
     JoinSetup,
     Connecting,
@@ -150,6 +157,8 @@ pub struct Session {
     pub room: Option<RoomInfo>,
     pub is_owner: bool,
     pub accept_connection: bool,
+    /// Offline solo match — never talks to the relay.
+    pub solo: bool,
 }
 
 #[derive(Resource, Default)]
@@ -217,9 +226,21 @@ fn spawn_main_menu(
         &mut commands,
         "ASTROWAR",
         format!(
-            "Server: {}{status_line}\n[1] Host internet room\n[2] Join with code\n[Esc] Quit",
+            "Server: {}{status_line}\n[1] Solo (offline)\n[2] Host internet room\n[3] Join with code\n[Esc] Quit",
             settings.server_url
         ),
+    );
+}
+
+fn spawn_solo_setup(
+    mut commands: Commands,
+    form: Res<HostForm>,
+    status: Res<StatusMessage>,
+) {
+    spawn_screen(
+        &mut commands,
+        "Solo play",
+        solo_setup_body(&form, &status),
     );
 }
 
@@ -268,6 +289,21 @@ fn spawn_lobby(
     status: Res<StatusMessage>,
 ) {
     spawn_screen(&mut commands, "Lobby", lobby_body(&session, &status));
+}
+
+fn solo_setup_body(form: &HostForm, status: &StatusMessage) -> String {
+    let nick_mark = if form.focus_nickname { ">" } else { " " };
+    let dur_mark = if form.focus_nickname { " " } else { ">" };
+    let status_line = if status.text.is_empty() {
+        String::new()
+    } else {
+        format!("\nStatus: {}\n", status.text)
+    };
+    format!(
+        "Offline — no server needed{status_line}\n{nick_mark} Nickname: {}\n{dur_mark} Duration: {} min\n\n[Tab] Switch field\n[Left/Right] Change duration\n[Enter] Start\n[Esc] Back",
+        form.nickname,
+        form.duration().as_minutes(),
+    )
 }
 
 fn host_setup_body(
@@ -358,6 +394,17 @@ fn set_dynamic_text(query: &mut Query<&mut Text, With<DynamicText>>, body: Strin
     }
 }
 
+fn refresh_solo_setup_ui(
+    form: Res<HostForm>,
+    status: Res<StatusMessage>,
+    mut query: Query<&mut Text, With<DynamicText>>,
+) {
+    if !(form.is_changed() || status.is_changed()) {
+        return;
+    }
+    set_dynamic_text(&mut query, solo_setup_body(&form, &status));
+}
+
 fn refresh_host_setup_ui(
     settings: Res<ClientSettings>,
     form: Res<HostForm>,
@@ -405,12 +452,19 @@ fn handle_main_menu_input(
 ) {
     if keys.just_pressed(KeyCode::Digit1) {
         status.text.clear();
+        *intent = ConnectIntent::None;
+        host_form.nickname = settings.nickname.clone();
+        host_form.focus_nickname = true;
+        next_state.set(AppState::SoloSetup);
+    }
+    if keys.just_pressed(KeyCode::Digit2) {
+        status.text.clear();
         *intent = ConnectIntent::Host;
         host_form.nickname = settings.nickname.clone();
         host_form.focus_nickname = true;
         next_state.set(AppState::HostSetup);
     }
-    if keys.just_pressed(KeyCode::Digit2) {
+    if keys.just_pressed(KeyCode::Digit3) {
         status.text.clear();
         *intent = ConnectIntent::Join;
         join_form.nickname.clear();
@@ -420,6 +474,62 @@ fn handle_main_menu_input(
     }
     if keys.just_pressed(KeyCode::Escape) {
         exit.send(AppExit::Success);
+    }
+}
+
+fn handle_solo_setup_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut key_events: EventReader<KeyboardInput>,
+    mut form: ResMut<HostForm>,
+    mut settings: ResMut<ClientSettings>,
+    mut status: ResMut<StatusMessage>,
+    mut session: ResMut<Session>,
+    mut host: ResMut<HostSim>,
+    mut latest: ResMut<LatestState>,
+    mut prediction: ResMut<LocalPrediction>,
+    mut next_state: ResMut<NextState<AppState>>,
+) {
+    if keys.just_pressed(KeyCode::Escape) {
+        next_state.set(AppState::MainMenu);
+        return;
+    }
+    if keys.just_pressed(KeyCode::Tab) {
+        form.focus_nickname = !form.focus_nickname;
+    }
+    if !form.focus_nickname {
+        if keys.just_pressed(KeyCode::ArrowLeft) {
+            let len = GameDurationMinutes::ALL.len();
+            form.duration_index = (form.duration_index + len - 1) % len;
+        }
+        if keys.just_pressed(KeyCode::ArrowRight) {
+            form.duration_index = (form.duration_index + 1) % GameDurationMinutes::ALL.len();
+        }
+    }
+    for event in key_events.read() {
+        if !event.state.is_pressed() || event.repeat {
+            continue;
+        }
+        if form.focus_nickname {
+            apply_text_edit(&mut form.nickname, &event.logical_key, 24, false);
+        }
+    }
+    if keys.just_pressed(KeyCode::Enter) {
+        let nickname = form.nickname.trim().to_string();
+        if nickname.is_empty() {
+            status.text = "Nickname is required".into();
+            return;
+        }
+        settings.nickname = nickname.clone();
+        status.text.clear();
+        start_solo_match(
+            &mut session,
+            &mut host,
+            &mut latest,
+            &mut prediction,
+            nickname,
+            form.duration(),
+        );
+        next_state.set(AppState::Playing);
     }
 }
 
@@ -543,6 +653,7 @@ fn handle_connecting_input(
         session.player_id = None;
         session.room = None;
         session.is_owner = false;
+        session.solo = false;
         status.text = "Connection cancelled".into();
         bridge.send(NetCommand::Leave);
         next_state.set(AppState::MainMenu);
@@ -563,6 +674,7 @@ fn handle_lobby_input(
         session.player_id = None;
         session.room = None;
         session.is_owner = false;
+        session.solo = false;
         next_state.set(AppState::MainMenu);
         return;
     }
@@ -580,14 +692,48 @@ fn handle_playing_input(
     bridge: Res<NetBridge>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
+        let was_solo = session.solo;
         session.accept_connection = false;
         status.text.clear();
-        bridge.send(NetCommand::Leave);
+        if !was_solo {
+            bridge.send(NetCommand::Leave);
+        }
         session.player_id = None;
         session.room = None;
         session.is_owner = false;
+        session.solo = false;
         next_state.set(AppState::MainMenu);
     }
+}
+
+fn start_solo_match(
+    session: &mut Session,
+    host: &mut HostSim,
+    latest: &mut LatestState,
+    prediction: &mut LocalPrediction,
+    nickname: String,
+    duration: GameDurationMinutes,
+) {
+    let player_id = "local-player".to_string();
+    session.player_id = Some(player_id.clone());
+    session.is_owner = true;
+    session.accept_connection = false;
+    session.solo = true;
+    session.room = Some(RoomInfo {
+        code: "SOLO".into(),
+        owner_id: player_id.clone(),
+        phase: RoomPhase::Playing,
+        mode: GameMode::Competitive,
+        duration_minutes: duration,
+        players: vec![PlayerInfo {
+            id: player_id,
+            nickname,
+        }],
+        max_players: MAX_PLAYERS,
+    });
+    *prediction = LocalPrediction::default();
+    begin_host_sim(session, host, duration);
+    apply_host_snapshot_locally(host, latest);
 }
 
 fn enter_playing_as_host(
@@ -602,6 +748,11 @@ fn enter_playing_as_host(
         .map(|room| room.duration_minutes)
         .unwrap_or(GameDurationMinutes::Five);
     begin_host_sim(session, host, duration);
+    apply_host_snapshot_locally(host, latest);
+    send_game(bridge, session, &snapshot(host));
+}
+
+fn apply_host_snapshot_locally(host: &HostSim, latest: &mut LatestState) {
     let message = snapshot(host);
     if let GameMessage::State {
         tick,
@@ -620,9 +771,9 @@ fn enter_playing_as_host(
         latest.bullets = bullets.clone();
         latest.asteroids = asteroids.clone();
         latest.age = 0.0;
-        latest.interval = 1.0 / 30.0;
+        latest.interval = 1.0 / 20.0;
+        latest.pending_destroyed.clear();
     }
-    send_game(bridge, &message);
 }
 
 fn poll_net_events(
@@ -652,6 +803,7 @@ fn poll_net_events(
                 }
                 let player_id = session.player_id.clone().unwrap_or_default();
                 session.is_owner = room.owner_id == player_id;
+                session.solo = false;
                 let phase = room.phase;
                 session.room = Some(room.clone());
                 status.text.clear();
@@ -663,7 +815,7 @@ fn poll_net_events(
                         if session.is_owner {
                             enter_playing_as_host(&session, &mut host, &mut latest, &bridge);
                         } else {
-                            send_game(&bridge, &GameMessage::RequestSnapshot);
+                            send_game(&bridge, &session, &GameMessage::RequestSnapshot);
                         }
                         next_state.set(AppState::Playing);
                     } else {
@@ -677,12 +829,13 @@ fn poll_net_events(
                 }
                 let player_id = session.player_id.clone().unwrap_or_default();
                 session.is_owner = room.owner_id == player_id;
+                session.solo = false;
                 session.room = Some(room);
                 status.text.clear();
                 if session.is_owner {
                     enter_playing_as_host(&session, &mut host, &mut latest, &bridge);
                 } else {
-                    send_game(&bridge, &GameMessage::RequestSnapshot);
+                    send_game(&bridge, &session, &GameMessage::RequestSnapshot);
                 }
                 next_state.set(AppState::Playing);
             }
@@ -727,6 +880,7 @@ fn poll_net_events(
                     session.player_id = None;
                     session.room = None;
                     session.is_owner = false;
+                    session.solo = false;
                     session.accept_connection = false;
                     status.text = "Disconnected from relay".into();
                     next_state.set(AppState::MainMenu);

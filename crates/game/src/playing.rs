@@ -177,7 +177,7 @@ pub fn spawn_playing_hud(mut commands: Commands, _session: Res<Session>) {
         ),
         (
             HudSlot::Mode,
-            "Competitive",
+            "",
             Node {
                 position_type: PositionType::Absolute,
                 bottom: Val::Px(16.0),
@@ -289,7 +289,10 @@ pub fn mark_player_forfeit(host: &mut HostSim, player_id: &str) {
     }
 }
 
-pub fn send_game(bridge: &NetBridge, message: &GameMessage) {
+pub fn send_game(bridge: &NetBridge, session: &Session, message: &GameMessage) {
+    if session.solo {
+        return;
+    }
     if let Ok(payload) = message.to_bytes() {
         bridge.send(NetCommand::Relay { payload });
     }
@@ -361,6 +364,7 @@ pub fn playing_send_input(
         throttle.last_sent = (move_x, move_y, false);
         send_game(
             &bridge,
+            &session,
             &GameMessage::Input {
                 seq: prediction.next_seq,
                 move_x,
@@ -508,7 +512,7 @@ pub fn playing_host_simulate(
             *tick = host.tick;
         }
         latest.tick = host.tick;
-        send_game(&bridge, &message);
+        send_game(&bridge, &session, &message);
     }
 }
 
@@ -784,7 +788,7 @@ pub fn playing_client_local_hits(
 
     for asteroid_id in hit_asteroids {
         latest.pending_destroyed.insert(asteroid_id);
-        send_game(&bridge, &GameMessage::Hit { asteroid_id });
+        send_game(&bridge, &session, &GameMessage::Hit { asteroid_id });
     }
 }
 
@@ -1096,7 +1100,7 @@ pub fn handle_relayed_game_message(
             }
             let message = build_snapshot(host);
             apply_snapshot_to_latest(latest, &message, true);
-            send_game(bridge, &message);
+            send_game(bridge, session, &message);
         }
         GameMessage::Hit { asteroid_id } => {
             if !session.is_owner || host.match_over {
@@ -1324,6 +1328,8 @@ pub fn sync_world_sprites(
             .map(|s| s.nickname.as_str())
             .unwrap_or("nobody");
         format!("MATCH OVER\nleader: {winner}")
+    } else if session.solo {
+        "Solo".to_string()
     } else {
         "Competitive".to_string()
     };
