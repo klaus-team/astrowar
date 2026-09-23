@@ -41,6 +41,14 @@ pub struct AsteroidSprite {
 #[derive(Component)]
 pub struct PlayingHud;
 
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub enum HudSlot {
+    Title,
+    Players,
+    Mode,
+    Leave,
+}
+
 #[derive(Resource, Default)]
 pub struct HostSim {
     pub active: bool,
@@ -139,25 +147,66 @@ pub struct LocalBullet {
     pub y: f32,
 }
 
-pub fn spawn_playing_hud(mut commands: Commands, session: Res<Session>) {
-    let role = if session.is_owner { "HOST" } else { "CLIENT" };
-    commands.spawn((
-        PlayingHud,
-        Text::new(format!(
-            "AstroWar ({role})\nArrows move  |  Space fire  |  Esc leave"
-        )),
-        TextFont {
-            font_size: 20.0,
-            ..default()
-        },
-        TextColor(Color::srgb(0.8, 0.85, 0.95)),
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(16.0),
-            left: Val::Px(16.0),
-            ..default()
-        },
-    ));
+pub fn spawn_playing_hud(mut commands: Commands, _session: Res<Session>) {
+    let font = TextFont {
+        font_size: 20.0,
+        ..default()
+    };
+    let color = TextColor(Color::srgb(0.8, 0.85, 0.95));
+
+    let slots = [
+        (
+            HudSlot::Title,
+            "AstroWar\n--:--",
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(16.0),
+                left: Val::Px(16.0),
+                ..default()
+            },
+        ),
+        (
+            HudSlot::Players,
+            "",
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(16.0),
+                right: Val::Px(16.0),
+                ..default()
+            },
+        ),
+        (
+            HudSlot::Mode,
+            "Competitive",
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(16.0),
+                left: Val::Px(16.0),
+                ..default()
+            },
+        ),
+        (
+            HudSlot::Leave,
+            "[Esc] Leave",
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(16.0),
+                right: Val::Px(16.0),
+                ..default()
+            },
+        ),
+    ];
+
+    for (slot, initial, node) in slots {
+        commands.spawn((
+            PlayingHud,
+            slot,
+            Text::new(initial),
+            font.clone(),
+            color.clone(),
+            node,
+        ));
+    }
 }
 
 pub fn cleanup_playing(
@@ -1094,7 +1143,7 @@ pub fn sync_world_sprites(
             Without<LocalBulletSprite>,
         ),
     >,
-    mut hud: Query<&mut Text, With<PlayingHud>>,
+    mut hud: Query<(&HudSlot, &mut Text), With<PlayingHud>>,
     session: Res<Session>,
 ) {
     let mut rendered_ships = if session.is_owner {
@@ -1246,7 +1295,6 @@ pub fn sync_world_sprites(
         }
     }
 
-    let role = if session.is_owner { "HOST" } else { "CLIENT" };
     let mut scores = rendered_ships.clone();
     scores.sort_by(|a, b| b.score.cmp(&a.score));
     let board = scores
@@ -1268,23 +1316,25 @@ pub fn sync_world_sprites(
         .join("\n");
     let minutes = latest.time_left_secs / 60;
     let seconds = latest.time_left_secs % 60;
-    let footer = if latest.match_over {
+    let title = format!("AstroWar\n{minutes:02}:{seconds:02}");
+    let mode = if latest.match_over {
         let winner = scores
             .iter()
             .find(|s| !s.forfeited)
             .map(|s| s.nickname.as_str())
             .unwrap_or("nobody");
-        format!("MATCH OVER — leader: {winner}\n[Esc] Leave")
+        format!("MATCH OVER\nleader: {winner}")
     } else {
-        format!(
-            "Time {minutes:02}:{seconds:02}\nArrows move  |  Space fire  |  Esc leave\nWhite spinner ends match if it lands"
-        )
+        "Competitive".to_string()
     };
-    for mut text in &mut hud {
-        *text = Text::new(format!(
-            "AstroWar ({role}) tick {}\n{footer}\n\n{board}",
-            latest.tick
-        ));
+
+    for (slot, mut text) in &mut hud {
+        *text = Text::new(match slot {
+            HudSlot::Title => title.clone(),
+            HudSlot::Players => board.clone(),
+            HudSlot::Mode => mode.clone(),
+            HudSlot::Leave => "[Esc] Leave".to_string(),
+        });
     }
 }
 
