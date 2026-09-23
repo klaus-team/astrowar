@@ -1,3 +1,4 @@
+use crate::board::PLAY_AREA_X;
 use crate::game_sync::{AsteroidKind, AsteroidState, BulletState, GameMessage, ShipState};
 use crate::net_bridge::{NetBridge, NetCommand};
 use crate::Session;
@@ -5,7 +6,6 @@ use bevy::prelude::*;
 use protocol::{GameDurationMinutes, RoomInfo};
 use std::collections::{HashMap, HashSet, VecDeque};
 
-pub const PLAY_AREA_X: f32 = 420.0;
 const SHIP_Y_MIN: f32 = -330.0;
 const SHIP_Y_MAX: f32 = -220.0;
 const SHIP_SPEED: f32 = 280.0;

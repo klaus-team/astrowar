@@ -1,9 +1,11 @@
+mod board;
 mod game_sync;
 mod net_bridge;
 mod playing;
 
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
+use board::{setup_board_camera, update_board_viewport};
 use net_bridge::{NetBridge, NetCommand, NetEvent};
 use playing::{
     advance_interpolation, begin_host_sim, cleanup_playing, handle_relayed_game_message,
@@ -16,7 +18,7 @@ use game_sync::GameMessage;
 
 fn main() {
     App::new()
-        .insert_resource(ClearColor(Color::srgb(0.02, 0.04, 0.1)))
+        .insert_resource(ClearColor(Color::srgb(0.01, 0.02, 0.05)))
         .insert_resource(ClientSettings {
             server_url: net::default_server_url(),
             nickname: "Player".into(),
@@ -33,13 +35,13 @@ fn main() {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "AstroWar".into(),
-                resolution: (960.0, 720.0).into(),
+                resolution: (960.0_f32, 720.0_f32).into(),
                 ..default()
             }),
             ..default()
         }))
         .init_state::<AppState>()
-        .add_systems(Startup, (setup_camera, setup_net_bridge))
+        .add_systems(Startup, (setup_board_camera, setup_net_bridge))
         .add_systems(OnEnter(AppState::MainMenu), spawn_main_menu)
         .add_systems(OnEnter(AppState::HostSetup), spawn_host_setup)
         .add_systems(OnEnter(AppState::JoinSetup), spawn_join_setup)
@@ -55,6 +57,7 @@ fn main() {
         .add_systems(
             Update,
             (
+                update_board_viewport,
                 handle_main_menu_input.run_if(in_state(AppState::MainMenu)),
                 handle_host_setup_input.run_if(in_state(AppState::HostSetup)),
                 handle_join_setup_input.run_if(in_state(AppState::JoinSetup)),
@@ -159,10 +162,6 @@ struct UiRoot;
 
 #[derive(Component)]
 struct DynamicText;
-
-fn setup_camera(mut commands: Commands) {
-    commands.spawn(Camera2d);
-}
 
 fn setup_net_bridge(mut commands: Commands) {
     commands.insert_resource(NetBridge::spawn());
