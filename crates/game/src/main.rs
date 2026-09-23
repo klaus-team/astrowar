@@ -1,9 +1,18 @@
+mod game_sync;
 mod net_bridge;
+mod playing;
 
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
 use net_bridge::{NetBridge, NetCommand, NetEvent};
-use protocol::{GameDurationMinutes, RoomInfo};
+use playing::{
+    advance_interpolation, begin_host_sim, cleanup_playing, handle_relayed_game_message,
+    playing_host_simulate, playing_predict_local, playing_send_input, seed_ships_from_room,
+    send_game, snapshot, spawn_playing_hud, sync_ship_sprites, HostSim, InputThrottle,
+    LatestState, LocalPrediction,
+};
+use protocol::{GameDurationMinutes, RoomInfo, RoomPhase};
+use game_sync::GameMessage;
 
 fn main() {
     App::new()
@@ -16,6 +25,11 @@ fn main() {
         .insert_resource(JoinForm::default())
         .insert_resource(Session::default())
         .insert_resource(StatusMessage::default())
+        .insert_resource(ConnectIntent::default())
+        .insert_resource(HostSim::default())
+        .insert_resource(LatestState::default())
+        .insert_resource(InputThrottle::default())
+        .insert_resource(LocalPrediction::default())
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "AstroWar".into(),
@@ -31,11 +45,13 @@ fn main() {
         .add_systems(OnEnter(AppState::JoinSetup), spawn_join_setup)
         .add_systems(OnEnter(AppState::Connecting), spawn_connecting)
         .add_systems(OnEnter(AppState::Lobby), spawn_lobby)
+        .add_systems(OnEnter(AppState::Playing), spawn_playing_hud)
         .add_systems(OnExit(AppState::MainMenu), cleanup_ui_root)
         .add_systems(OnExit(AppState::HostSetup), cleanup_ui_root)
         .add_systems(OnExit(AppState::JoinSetup), cleanup_ui_root)
         .add_systems(OnExit(AppState::Connecting), cleanup_ui_root)
         .add_systems(OnExit(AppState::Lobby), cleanup_ui_root)
+        .add_systems(OnExit(AppState::Playing), cleanup_playing)
         .add_systems(
             Update,
             (
@@ -44,9 +60,15 @@ fn main() {
                 handle_join_setup_input.run_if(in_state(AppState::JoinSetup)),
                 handle_lobby_input.run_if(in_state(AppState::Lobby)),
                 handle_connecting_input.run_if(in_state(AppState::Connecting)),
+                handle_playing_input.run_if(in_state(AppState::Playing)),
                 refresh_host_setup_ui.run_if(in_state(AppState::HostSetup)),
                 refresh_join_setup_ui.run_if(in_state(AppState::JoinSetup)),
                 refresh_lobby_ui.run_if(in_state(AppState::Lobby)),
+                playing_send_input.run_if(in_state(AppState::Playing)),
+                playing_predict_local.run_if(in_state(AppState::Playing)),
+                playing_host_simulate.run_if(in_state(AppState::Playing)),
+                advance_interpolation.run_if(in_state(AppState::Playing)),
+                sync_ship_sprites.run_if(in_state(AppState::Playing)),
                 poll_net_events,
             ),
         )
@@ -61,6 +83,7 @@ enum AppState {
     JoinSetup,
     Connecting,
     Lobby,
+    Playing,
 }
 
 #[derive(Resource)]
@@ -102,19 +125,27 @@ struct JoinForm {
 impl Default for JoinForm {
     fn default() -> Self {
         Self {
-            nickname: "Player".into(),
+            nickname: String::new(),
             code: String::new(),
             focus_nickname: true,
         }
     }
 }
 
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Default)]
+enum ConnectIntent {
+    #[default]
+    None,
+    Host,
+    Join,
+}
+
 #[derive(Resource, Default)]
-struct Session {
-    player_id: Option<String>,
-    room: Option<RoomInfo>,
-    is_owner: bool,
-    accept_connection: bool,
+pub struct Session {
+    pub player_id: Option<String>,
+    pub room: Option<RoomInfo>,
+    pub is_owner: bool,
+    pub accept_connection: bool,
 }
 
 #[derive(Resource, Default)]
@@ -172,12 +203,21 @@ fn spawn_screen(commands: &mut Commands, title: &str, body: String) {
         });
 }
 
-fn spawn_main_menu(mut commands: Commands, settings: Res<ClientSettings>) {
+fn spawn_main_menu(
+    mut commands: Commands,
+    settings: Res<ClientSettings>,
+    status: Res<StatusMessage>,
+) {
+    let status_line = if status.text.is_empty() {
+        String::new()
+    } else {
+        format!("\nLast status: {}\n", status.text)
+    };
     spawn_screen(
         &mut commands,
         "ASTROWAR",
         format!(
-            "Server: {}\n\n[1] Host internet room\n[2] Join with code\n[Esc] Quit",
+            "Server: {}{status_line}\n[1] Host internet room\n[2] Join with code\n[Esc] Quit",
             settings.server_url
         ),
     );
@@ -263,7 +303,7 @@ fn join_setup_body(
         format!("\nStatus: {}\n", status.text)
     };
     format!(
-        "Server: {}\n{status_line}\n{nick_mark} Nickname: {}\n{code_mark} Room code: {}\n\n[Tab] Switch field\n[Enter] Join room\n[Esc] Back",
+        "Server: {}\n{status_line}\n{nick_mark} Nickname: {}\n{code_mark} Room code: {}\n\nNicknames must be unique in the room.\n[Tab] Switch field\n[Enter] Join room\n[Esc] Back",
         settings.server_url, form.nickname, form.code,
     )
 }
@@ -360,17 +400,20 @@ fn handle_main_menu_input(
     mut status: ResMut<StatusMessage>,
     mut host_form: ResMut<HostForm>,
     mut join_form: ResMut<JoinForm>,
+    mut intent: ResMut<ConnectIntent>,
     settings: Res<ClientSettings>,
 ) {
     if keys.just_pressed(KeyCode::Digit1) {
         status.text.clear();
+        *intent = ConnectIntent::Host;
         host_form.nickname = settings.nickname.clone();
         host_form.focus_nickname = true;
         next_state.set(AppState::HostSetup);
     }
     if keys.just_pressed(KeyCode::Digit2) {
         status.text.clear();
-        join_form.nickname = settings.nickname.clone();
+        *intent = ConnectIntent::Join;
+        join_form.nickname.clear();
         join_form.code.clear();
         join_form.focus_nickname = true;
         next_state.set(AppState::JoinSetup);
@@ -387,10 +430,12 @@ fn handle_host_setup_input(
     mut settings: ResMut<ClientSettings>,
     mut status: ResMut<StatusMessage>,
     mut session: ResMut<Session>,
+    mut intent: ResMut<ConnectIntent>,
     mut next_state: ResMut<NextState<AppState>>,
     bridge: Res<NetBridge>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
+        *intent = ConnectIntent::None;
         next_state.set(AppState::MainMenu);
         return;
     }
@@ -422,6 +467,7 @@ fn handle_host_setup_input(
         }
         settings.nickname = nickname.clone();
         session.accept_connection = true;
+        *intent = ConnectIntent::Host;
         status.text = "Creating room...".into();
         bridge.send(NetCommand::ConnectAndCreate {
             url: settings.server_url.clone(),
@@ -439,10 +485,12 @@ fn handle_join_setup_input(
     mut settings: ResMut<ClientSettings>,
     mut status: ResMut<StatusMessage>,
     mut session: ResMut<Session>,
+    mut intent: ResMut<ConnectIntent>,
     mut next_state: ResMut<NextState<AppState>>,
     bridge: Res<NetBridge>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
+        *intent = ConnectIntent::None;
         next_state.set(AppState::MainMenu);
         return;
     }
@@ -472,6 +520,7 @@ fn handle_join_setup_input(
         }
         settings.nickname = nickname.clone();
         session.accept_connection = true;
+        *intent = ConnectIntent::Join;
         status.text = format!("Joining {code}...");
         bridge.send(NetCommand::ConnectAndJoin {
             url: settings.server_url.clone(),
@@ -523,12 +572,51 @@ fn handle_lobby_input(
     }
 }
 
+fn handle_playing_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut session: ResMut<Session>,
+    mut status: ResMut<StatusMessage>,
+    mut next_state: ResMut<NextState<AppState>>,
+    bridge: Res<NetBridge>,
+) {
+    if keys.just_pressed(KeyCode::Escape) {
+        session.accept_connection = false;
+        status.text.clear();
+        bridge.send(NetCommand::Leave);
+        session.player_id = None;
+        session.room = None;
+        session.is_owner = false;
+        next_state.set(AppState::MainMenu);
+    }
+}
+
+fn enter_playing_as_host(
+    session: &Session,
+    host: &mut HostSim,
+    latest: &mut LatestState,
+    bridge: &NetBridge,
+) {
+    begin_host_sim(session, host);
+    if let GameMessage::State { tick, ships } = snapshot(host) {
+        latest.from = ships.clone();
+        latest.to = ships.clone();
+        latest.tick = tick;
+        latest.age = 0.0;
+        latest.interval = 1.0 / 30.0;
+        send_game(bridge, &GameMessage::State { tick, ships });
+    }
+}
+
 fn poll_net_events(
     bridge: Res<NetBridge>,
     mut session: ResMut<Session>,
     mut status: ResMut<StatusMessage>,
     mut next_state: ResMut<NextState<AppState>>,
     current: Res<State<AppState>>,
+    intent: Res<ConnectIntent>,
+    mut host: ResMut<HostSim>,
+    mut latest: ResMut<LatestState>,
+    mut prediction: ResMut<LocalPrediction>,
 ) {
     while let Some(event) = bridge.poll() {
         match event {
@@ -538,15 +626,31 @@ fn poll_net_events(
                 }
             }
             NetEvent::RoomUpdated(room) => {
-                if !session.accept_connection && *current.get() != AppState::Lobby {
+                if !session.accept_connection
+                    && *current.get() != AppState::Lobby
+                    && *current.get() != AppState::Playing
+                {
                     continue;
                 }
                 let player_id = session.player_id.clone().unwrap_or_default();
                 session.is_owner = room.owner_id == player_id;
-                session.room = Some(room);
+                let phase = room.phase;
+                session.room = Some(room.clone());
                 status.text.clear();
+                if host.active && session.is_owner {
+                    seed_ships_from_room(&mut host, &room);
+                }
                 if *current.get() == AppState::Connecting {
-                    next_state.set(AppState::Lobby);
+                    if phase == RoomPhase::Playing {
+                        if session.is_owner {
+                            enter_playing_as_host(&session, &mut host, &mut latest, &bridge);
+                        } else {
+                            send_game(&bridge, &GameMessage::RequestSnapshot);
+                        }
+                        next_state.set(AppState::Playing);
+                    } else {
+                        next_state.set(AppState::Lobby);
+                    }
                 }
             }
             NetEvent::GameStarted(room) => {
@@ -556,25 +660,52 @@ fn poll_net_events(
                 let player_id = session.player_id.clone().unwrap_or_default();
                 session.is_owner = room.owner_id == player_id;
                 session.room = Some(room);
-                status.text = "Match started (gameplay comes next)".into();
+                status.text.clear();
+                if session.is_owner {
+                    enter_playing_as_host(&session, &mut host, &mut latest, &bridge);
+                } else {
+                    send_game(&bridge, &GameMessage::RequestSnapshot);
+                }
+                next_state.set(AppState::Playing);
             }
             NetEvent::PlayerLeft {
+                player_id,
                 nickname,
                 forfeited,
-                ..
             } => {
                 let kind = if forfeited { "forfeited" } else { "left" };
                 status.text = format!("{nickname} {kind}");
+                if host.active {
+                    host.ships.remove(&player_id);
+                }
+            }
+            NetEvent::Relayed {
+                from_player_id,
+                payload,
+            } => {
+                handle_relayed_game_message(
+                    &from_player_id,
+                    &payload,
+                    &session,
+                    &mut host,
+                    &mut latest,
+                    &mut prediction,
+                    &bridge,
+                );
             }
             NetEvent::Error(message) => {
                 status.text = message;
                 if *current.get() == AppState::Connecting {
                     session.accept_connection = false;
-                    next_state.set(AppState::MainMenu);
+                    match intent.as_ref() {
+                        ConnectIntent::Host => next_state.set(AppState::HostSetup),
+                        ConnectIntent::Join => next_state.set(AppState::JoinSetup),
+                        ConnectIntent::None => next_state.set(AppState::MainMenu),
+                    }
                 }
             }
             NetEvent::Disconnected => {
-                if *current.get() == AppState::Lobby {
+                if *current.get() == AppState::Lobby || *current.get() == AppState::Playing {
                     session.player_id = None;
                     session.room = None;
                     session.is_owner = false;

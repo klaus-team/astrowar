@@ -20,6 +20,9 @@ pub enum NetCommand {
     },
     StartGame,
     Leave,
+    Relay {
+        payload: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -30,8 +33,13 @@ pub enum NetEvent {
     RoomUpdated(RoomInfo),
     GameStarted(RoomInfo),
     PlayerLeft {
+        player_id: String,
         nickname: String,
         forfeited: bool,
+    },
+    Relayed {
+        from_player_id: String,
+        payload: Vec<u8>,
     },
     Error(String),
     Disconnected,
@@ -94,6 +102,13 @@ async fn net_loop(mut cmd_rx: UnboundedReceiver<NetCommand>, event_tx: Unbounded
                             let _ = event_tx.send(NetEvent::Error("not connected".into()));
                         }
                     }
+                    NetCommand::Relay { payload } => {
+                        if let Some(active) = client.as_mut() {
+                            if let Err(err) = active.send(ClientMessage::Relay { payload }).await {
+                                let _ = event_tx.send(NetEvent::Error(err.to_string()));
+                            }
+                        }
+                    }
                     NetCommand::ConnectAndCreate { url, nickname, duration } => {
                         client = None;
                         match connect_and_create(&url, nickname, duration).await {
@@ -132,8 +147,9 @@ async fn net_loop(mut cmd_rx: UnboundedReceiver<NetCommand>, event_tx: Unbounded
                     Ok(ServerMessage::GameStarted { room }) => {
                         let _ = event_tx.send(NetEvent::GameStarted(room));
                     }
-                    Ok(ServerMessage::PlayerLeft { nickname, forfeited, .. }) => {
+                    Ok(ServerMessage::PlayerLeft { player_id, nickname, forfeited }) => {
                         let _ = event_tx.send(NetEvent::PlayerLeft {
+                            player_id,
                             nickname,
                             forfeited,
                         });
@@ -141,7 +157,16 @@ async fn net_loop(mut cmd_rx: UnboundedReceiver<NetCommand>, event_tx: Unbounded
                     Ok(ServerMessage::Error { message }) => {
                         let _ = event_tx.send(NetEvent::Error(message));
                     }
-                    Ok(ServerMessage::Relayed { .. }) | Ok(ServerMessage::Welcome { .. }) => {}
+                    Ok(ServerMessage::Relayed {
+                        from_player_id,
+                        payload,
+                    }) => {
+                        let _ = event_tx.send(NetEvent::Relayed {
+                            from_player_id,
+                            payload,
+                        });
+                    }
+                    Ok(ServerMessage::Welcome { .. }) => {}
                     Err(err) => {
                         client = None;
                         let _ = event_tx.send(NetEvent::Error(err.to_string()));
