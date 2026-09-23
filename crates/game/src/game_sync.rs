@@ -49,11 +49,24 @@ pub struct BulletState {
     pub y: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AsteroidKind {
+    Large,
+    Small,
+    /// Must be destroyed; reaching the player horizon ends the match.
+    Spinner,
+    /// Falls while weaving left/right.
+    Zigzag,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AsteroidState {
     pub id: u32,
+    pub kind: AsteroidKind,
     pub x: f32,
     pub y: f32,
+    pub vx: f32,
     pub vy: f32,
     pub radius: f32,
 }

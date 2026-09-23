@@ -1,4 +1,4 @@
-use crate::game_sync::{AsteroidState, BulletState, GameMessage, ShipState};
+use crate::game_sync::{AsteroidKind, AsteroidState, BulletState, GameMessage, ShipState};
 use crate::net_bridge::{NetBridge, NetCommand};
 use crate::Session;
 use bevy::prelude::*;
@@ -14,6 +14,7 @@ const STATE_HZ: f32 = 20.0;
 const INPUT_HZ: f32 = 30.0;
 const FIRE_COOLDOWN: f32 = 0.22;
 const ASTEROID_SPAWN_BASE: f32 = 1.1;
+const HORIZON_Y: f32 = SHIP_Y_MIN - 24.0;
 const PENDING_INPUT_CAP: usize = 180;
 const STARTING_LIVES: u8 = 3;
 
@@ -83,8 +84,10 @@ pub struct SimBullet {
 #[derive(Clone)]
 pub struct SimAsteroid {
     pub id: u32,
+    pub kind: AsteroidKind,
     pub x: f32,
     pub y: f32,
+    pub vx: f32,
     pub vy: f32,
     pub radius: f32,
     pub points: i32,
@@ -416,10 +419,17 @@ pub fn playing_host_simulate(
         host.bullets.retain(|b| b.y < 380.0);
 
         for asteroid in &mut host.asteroids {
-            asteroid.y -= asteroid.vy * dt;
+            integrate_asteroid(asteroid, dt);
         }
         resolve_collisions(&mut host, session.player_id.as_deref());
-        host.asteroids.retain(|a| a.y > -400.0 - a.radius);
+        if spinner_crossed_horizon(&host.asteroids) {
+            host.match_over = true;
+            for ship in host.ships.values_mut() {
+                ship.move_x = 0;
+                ship.move_y = 0;
+            }
+        }
+        host.asteroids.retain(|a| a.y > HORIZON_Y - a.radius);
 
         host.spawn_accum += dt;
         let total = session
@@ -479,22 +489,91 @@ fn spawn_asteroid(host: &mut HostSim) {
     let id = host.next_asteroid_id;
     host.next_asteroid_id = host.next_asteroid_id.wrapping_add(1);
     let x = pseudo_rand(id) * PLAY_AREA_X * 2.0 - PLAY_AREA_X;
-    let size_roll = pseudo_rand(id.wrapping_mul(3));
-    let (radius, points, speed) = if size_roll > 0.7 {
-        (28.0, 10, 90.0)
-    } else if size_roll > 0.35 {
-        (18.0, 20, 130.0)
+    let roll = pseudo_rand(id.wrapping_mul(3));
+    let (kind, radius, points, speed, vx) = if roll > 0.88 {
+        (
+            AsteroidKind::Spinner,
+            14.0,
+            40,
+            150.0 + pseudo_rand(id.wrapping_mul(11)) * 40.0,
+            0.0,
+        )
+    } else if roll > 0.72 {
+        let dir = if pseudo_rand(id.wrapping_mul(5)) > 0.5 {
+            1.0
+        } else {
+            -1.0
+        };
+        (
+            AsteroidKind::Zigzag,
+            13.0,
+            80,
+            120.0 + pseudo_rand(id.wrapping_mul(13)) * 35.0,
+            dir * (140.0 + pseudo_rand(id.wrapping_mul(17)) * 60.0),
+        )
+    } else if roll > 0.40 {
+        (
+            AsteroidKind::Small,
+            12.0,
+            20,
+            160.0 + pseudo_rand(id.wrapping_mul(7)) * 50.0,
+            0.0,
+        )
     } else {
-        (12.0, 40, 170.0)
+        (
+            AsteroidKind::Large,
+            28.0,
+            10,
+            90.0 + pseudo_rand(id.wrapping_mul(7)) * 35.0,
+            0.0,
+        )
     };
     host.asteroids.push(SimAsteroid {
         id,
+        kind,
         x,
         y: 360.0 + radius,
-        vy: speed + pseudo_rand(id.wrapping_mul(7)) * 40.0,
+        vx,
+        vy: speed,
         radius,
         points,
     });
+}
+
+fn integrate_asteroid(asteroid: &mut SimAsteroid, dt: f32) {
+    asteroid.y -= asteroid.vy * dt;
+    if asteroid.vx.abs() > f32::EPSILON {
+        asteroid.x += asteroid.vx * dt;
+        let limit = PLAY_AREA_X - asteroid.radius;
+        if asteroid.x > limit {
+            asteroid.x = limit;
+            asteroid.vx = -asteroid.vx.abs();
+        } else if asteroid.x < -limit {
+            asteroid.x = -limit;
+            asteroid.vx = asteroid.vx.abs();
+        }
+    }
+}
+
+fn integrate_asteroid_state(asteroid: &mut AsteroidState, dt: f32) {
+    asteroid.y -= asteroid.vy * dt;
+    if asteroid.vx.abs() > f32::EPSILON {
+        asteroid.x += asteroid.vx * dt;
+        let limit = PLAY_AREA_X - asteroid.radius;
+        if asteroid.x > limit {
+            asteroid.x = limit;
+            asteroid.vx = -asteroid.vx.abs();
+        } else if asteroid.x < -limit {
+            asteroid.x = -limit;
+            asteroid.vx = asteroid.vx.abs();
+        }
+    }
+}
+
+fn spinner_crossed_horizon(asteroids: &[SimAsteroid]) -> bool {
+    asteroids
+        .iter()
+        .any(|a| a.kind == AsteroidKind::Spinner && a.y - a.radius <= HORIZON_Y)
 }
 
 fn pseudo_rand(seed: u32) -> f32 {
@@ -508,7 +587,6 @@ fn resolve_collisions(host: &mut HostSim, host_player_id: Option<&str>) {
     let mut scored = Vec::new();
 
     for bullet in &host.bullets {
-        // Remote players resolve hits on their own client and send Hit.
         if host_player_id.is_some_and(|id| bullet.owner_id != id) {
             continue;
         }
@@ -543,7 +621,19 @@ fn resolve_collisions(host: &mut HostSim, host_player_id: Option<&str>) {
         }
     }
     for (player_id, asteroid_id) in ship_hits {
+        let kind = host
+            .asteroids
+            .iter()
+            .find(|a| a.id == asteroid_id)
+            .map(|a| a.kind);
         host.asteroids.retain(|a| a.id != asteroid_id);
+        if kind == Some(AsteroidKind::Spinner) {
+            host.match_over = true;
+            for ship in host.ships.values_mut() {
+                ship.move_x = 0;
+                ship.move_y = 0;
+            }
+        }
         if let Some(ship) = host.ships.get_mut(&player_id) {
             if ship.lives > 0 {
                 ship.lives -= 1;
@@ -558,11 +648,18 @@ fn resolve_collisions(host: &mut HostSim, host_player_id: Option<&str>) {
 }
 
 fn award_asteroid_hit(host: &mut HostSim, player_id: &str, asteroid_id: u32) {
-    let points = if let Some(index) = host.asteroids.iter().position(|a| a.id == asteroid_id) {
-        let points = host.asteroids[index].points;
-        host.asteroids.remove(index);
-        host.recent_destroyed.insert(asteroid_id, points);
-        points
+    let removed = host
+        .asteroids
+        .iter()
+        .position(|a| a.id == asteroid_id)
+        .map(|index| host.asteroids.remove(index));
+
+    let points = if let Some(asteroid) = removed {
+        host.recent_destroyed.insert(asteroid_id, asteroid.points);
+        if asteroid.kind == AsteroidKind::Large {
+            split_large_rock(host, &asteroid);
+        }
+        asteroid.points
     } else {
         host.recent_destroyed
             .get(&asteroid_id)
@@ -576,6 +673,26 @@ fn award_asteroid_hit(host: &mut HostSim, player_id: &str, asteroid_id: u32) {
         if ship.alive && !ship.forfeited {
             ship.score += points;
         }
+    }
+}
+
+fn split_large_rock(host: &mut HostSim, parent: &SimAsteroid) {
+    for i in 0..2 {
+        let id = host.next_asteroid_id;
+        host.next_asteroid_id = host.next_asteroid_id.wrapping_add(1);
+        let offset = if i == 0 { -18.0 } else { 18.0 };
+        let dir = if i == 0 { -1.0 } else { 1.0 };
+        let spread = 110.0 + pseudo_rand(id) * 50.0;
+        host.asteroids.push(SimAsteroid {
+            id,
+            kind: AsteroidKind::Small,
+            x: (parent.x + offset).clamp(-PLAY_AREA_X, PLAY_AREA_X),
+            y: parent.y,
+            vx: dir * spread,
+            vy: parent.vy + 40.0 + pseudo_rand(id.wrapping_mul(3)) * 30.0,
+            radius: 12.0,
+            points: 20,
+        });
     }
 }
 
@@ -663,8 +780,10 @@ fn build_snapshot(host: &HostSim) -> GameMessage {
             .iter()
             .map(|a| AsteroidState {
                 id: a.id,
+                kind: a.kind,
                 x: a.x,
                 y: a.y,
+                vx: a.vx,
                 vy: a.vy,
                 radius: a.radius,
             })
@@ -851,7 +970,7 @@ pub fn advance_interpolation(
     let dt = time.delta_secs();
     latest.age += dt;
     for asteroid in &mut latest.asteroids {
-        asteroid.y -= asteroid.vy * dt;
+        integrate_asteroid_state(asteroid, dt);
     }
     for bullet in &mut latest.bullets {
         bullet.y += BULLET_SPEED * dt;
@@ -1100,6 +1219,7 @@ pub fn sync_world_sprites(
     for asteroid in &latest.asteroids {
         seen_asteroids.push(asteroid.id);
         let size = Vec2::splat(asteroid.radius * 2.0);
+        let color = color_for_asteroid(asteroid.kind);
         if let Some((_, _, mut transform, mut sprite)) = asteroids
             .iter_mut()
             .find(|(_, marker, _, _)| marker.id == asteroid.id)
@@ -1107,11 +1227,12 @@ pub fn sync_world_sprites(
             transform.translation.x = asteroid.x;
             transform.translation.y = asteroid.y;
             sprite.custom_size = Some(size);
+            sprite.color = color;
         } else {
             commands.spawn((
                 AsteroidSprite { id: asteroid.id },
                 Sprite {
-                    color: Color::srgb(0.55, 0.5, 0.48),
+                    color,
                     custom_size: Some(size),
                     ..default()
                 },
@@ -1155,7 +1276,9 @@ pub fn sync_world_sprites(
             .unwrap_or("nobody");
         format!("MATCH OVER — leader: {winner}\n[Esc] Leave")
     } else {
-        format!("Time {minutes:02}:{seconds:02}\nArrows move  |  Space fire  |  Esc leave")
+        format!(
+            "Time {minutes:02}:{seconds:02}\nArrows move  |  Space fire  |  Esc leave\nWhite spinner ends match if it lands"
+        )
     };
     for mut text in &mut hud {
         *text = Text::new(format!(
@@ -1175,4 +1298,13 @@ fn color_for_id(player_id: &str) -> Color {
     let g = 0.35 + (((hash >> 8) & 0xff) as f32 / 255.0) * 0.55;
     let b = 0.35 + (((hash >> 16) & 0xff) as f32 / 255.0) * 0.55;
     Color::srgb(r, g, b)
+}
+
+fn color_for_asteroid(kind: AsteroidKind) -> Color {
+    match kind {
+        AsteroidKind::Large => Color::srgb(0.55, 0.5, 0.48),
+        AsteroidKind::Small => Color::srgb(0.7, 0.62, 0.55),
+        AsteroidKind::Spinner => Color::srgb(0.95, 0.92, 0.85),
+        AsteroidKind::Zigzag => Color::srgb(0.35, 0.75, 0.95),
+    }
 }
