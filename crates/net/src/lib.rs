@@ -1,5 +1,7 @@
 use futures_util::{SinkExt, StreamExt};
-use protocol::{ClientMessage, ServerMessage, PROTOCOL_VERSION};
+use protocol::{
+    decode_server_relayed, encode_client_relay, ClientMessage, ServerMessage, PROTOCOL_VERSION,
+};
 use thiserror::Error;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
@@ -69,8 +71,16 @@ impl Client {
     }
 
     pub async fn send(&mut self, message: ClientMessage) -> Result<(), NetError> {
-        let text = serde_json::to_string(&message)?;
-        self.stream.send(Message::Text(text.into())).await?;
+        match message {
+            ClientMessage::Relay { payload } => {
+                let frame = encode_client_relay(&payload);
+                self.stream.send(Message::Binary(frame.into())).await?;
+            }
+            other => {
+                let text = serde_json::to_string(&other)?;
+                self.stream.send(Message::Text(text.into())).await?;
+            }
+        }
         Ok(())
     }
 
@@ -80,6 +90,14 @@ impl Client {
             match message {
                 Message::Text(text) => {
                     return Ok(serde_json::from_str(&text)?);
+                }
+                Message::Binary(bytes) => {
+                    let (from_player_id, payload) = decode_server_relayed(&bytes)
+                        .map_err(|err| NetError::Protocol(err.to_string()))?;
+                    return Ok(ServerMessage::Relayed {
+                        from_player_id,
+                        payload,
+                    });
                 }
                 Message::Close(_) => return Err(NetError::Closed),
                 _ => continue,

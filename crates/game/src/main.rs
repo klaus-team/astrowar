@@ -7,9 +7,9 @@ use bevy::prelude::*;
 use net_bridge::{NetBridge, NetCommand, NetEvent};
 use playing::{
     advance_interpolation, begin_host_sim, cleanup_playing, handle_relayed_game_message,
-    playing_host_simulate, playing_predict_local, playing_send_input, seed_ships_from_room,
-    send_game, snapshot, spawn_playing_hud, sync_ship_sprites, HostSim, InputThrottle,
-    LatestState, LocalPrediction,
+    mark_player_forfeit, playing_client_local_hits, playing_host_simulate, playing_predict_local,
+    playing_send_input, seed_ships_from_room, send_game, snapshot, spawn_playing_hud,
+    sync_world_sprites, HostSim, InputThrottle, LatestState, LocalPrediction,
 };
 use protocol::{GameDurationMinutes, RoomInfo, RoomPhase};
 use game_sync::GameMessage;
@@ -64,12 +64,13 @@ fn main() {
                 refresh_host_setup_ui.run_if(in_state(AppState::HostSetup)),
                 refresh_join_setup_ui.run_if(in_state(AppState::JoinSetup)),
                 refresh_lobby_ui.run_if(in_state(AppState::Lobby)),
-                playing_send_input.run_if(in_state(AppState::Playing)),
+                poll_net_events,
                 playing_predict_local.run_if(in_state(AppState::Playing)),
+                playing_send_input.run_if(in_state(AppState::Playing)),
                 playing_host_simulate.run_if(in_state(AppState::Playing)),
                 advance_interpolation.run_if(in_state(AppState::Playing)),
-                sync_ship_sprites.run_if(in_state(AppState::Playing)),
-                poll_net_events,
+                playing_client_local_hits.run_if(in_state(AppState::Playing)),
+                sync_world_sprites.run_if(in_state(AppState::Playing)),
             ),
         )
         .run();
@@ -596,15 +597,33 @@ fn enter_playing_as_host(
     latest: &mut LatestState,
     bridge: &NetBridge,
 ) {
-    begin_host_sim(session, host);
-    if let GameMessage::State { tick, ships } = snapshot(host) {
-        latest.from = ships.clone();
-        latest.to = ships.clone();
-        latest.tick = tick;
+    let duration = session
+        .room
+        .as_ref()
+        .map(|room| room.duration_minutes)
+        .unwrap_or(GameDurationMinutes::Five);
+    begin_host_sim(session, host, duration);
+    let message = snapshot(host);
+    if let GameMessage::State {
+        tick,
+        time_left_secs,
+        match_over,
+        ships,
+        bullets,
+        asteroids,
+    } = &message
+    {
+        latest.from_ships = ships.clone();
+        latest.to_ships = ships.clone();
+        latest.tick = *tick;
+        latest.time_left_secs = *time_left_secs;
+        latest.match_over = *match_over;
+        latest.bullets = bullets.clone();
+        latest.asteroids = asteroids.clone();
         latest.age = 0.0;
         latest.interval = 1.0 / 30.0;
-        send_game(bridge, &GameMessage::State { tick, ships });
     }
+    send_game(bridge, &message);
 }
 
 fn poll_net_events(
@@ -676,7 +695,7 @@ fn poll_net_events(
                 let kind = if forfeited { "forfeited" } else { "left" };
                 status.text = format!("{nickname} {kind}");
                 if host.active {
-                    host.ships.remove(&player_id);
+                    mark_player_forfeit(&mut host, &player_id);
                 }
             }
             NetEvent::Relayed {

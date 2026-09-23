@@ -7,7 +7,9 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
-use protocol::{ClientMessage, ServerMessage, PROTOCOL_VERSION};
+use protocol::{
+    decode_client_relay, encode_server_relayed, ClientMessage, ServerMessage, PROTOCOL_VERSION,
+};
 use state::AppState;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -81,10 +83,20 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     let writer = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            let Ok(text) = serde_json::to_string(&msg) else {
-                continue;
+            let outbound = match &msg {
+                ServerMessage::Relayed {
+                    from_player_id,
+                    payload,
+                } => match encode_server_relayed(from_player_id, payload) {
+                    Ok(bytes) => Message::Binary(bytes.into()),
+                    Err(_) => continue,
+                },
+                other => match serde_json::to_string(other) {
+                    Ok(text) => Message::Text(text.into()),
+                    Err(_) => continue,
+                },
             };
-            if sink.send(Message::Text(text.into())).await.is_err() {
+            if sink.send(outbound).await.is_err() {
                 break;
             }
         }
@@ -98,19 +110,20 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         .insert(player_id.clone(), tx.clone());
 
     while let Some(Ok(message)) = stream.next().await {
-        let Message::Text(text) = message else {
-            continue;
-        };
-
-        let parsed: Result<ClientMessage, _> = serde_json::from_str(&text);
-        let client_msg = match parsed {
-            Ok(msg) => msg,
-            Err(err) => {
-                let _ = tx.send(ServerMessage::Error {
-                    message: format!("invalid message: {err}"),
-                });
-                continue;
-            }
+        let client_msg = match message {
+            Message::Binary(bytes) => ClientMessage::Relay {
+                payload: decode_client_relay(&bytes),
+            },
+            Message::Text(text) => match serde_json::from_str(&text) {
+                Ok(msg) => msg,
+                Err(err) => {
+                    let _ = tx.send(ServerMessage::Error {
+                        message: format!("invalid message: {err}"),
+                    });
+                    continue;
+                }
+            },
+            _ => continue,
         };
 
         match client_msg {

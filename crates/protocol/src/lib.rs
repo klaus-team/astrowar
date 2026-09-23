@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 pub const MAX_PLAYERS: u8 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +66,7 @@ pub enum ClientMessage {
     },
     StartGame,
     Leave,
+    /// Game payloads prefer WebSocket binary frames (see `encode_client_relay`).
     Relay {
         payload: Vec<u8>,
     },
@@ -92,8 +93,63 @@ pub enum ServerMessage {
         nickname: String,
         forfeited: bool,
     },
+    /// Game payloads prefer WebSocket binary frames (see `encode_server_relayed`).
     Relayed {
         from_player_id: String,
         payload: Vec<u8>,
     },
+}
+
+/// Client → server binary frame: raw game payload bytes.
+pub fn encode_client_relay(payload: &[u8]) -> Vec<u8> {
+    payload.to_vec()
+}
+
+pub fn decode_client_relay(bytes: &[u8]) -> Vec<u8> {
+    bytes.to_vec()
+}
+
+/// Server → client binary frame: `[u8 id_len][id utf8][payload...]`.
+pub fn encode_server_relayed(
+    from_player_id: &str,
+    payload: &[u8],
+) -> Result<Vec<u8>, &'static str> {
+    let id = from_player_id.as_bytes();
+    if id.len() > u8::MAX as usize {
+        return Err("from_player_id too long");
+    }
+    let mut out = Vec::with_capacity(1 + id.len() + payload.len());
+    out.push(id.len() as u8);
+    out.extend_from_slice(id);
+    out.extend_from_slice(payload);
+    Ok(out)
+}
+
+pub fn decode_server_relayed(bytes: &[u8]) -> Result<(String, Vec<u8>), &'static str> {
+    if bytes.is_empty() {
+        return Err("empty relayed frame");
+    }
+    let id_len = bytes[0] as usize;
+    let id_end = 1 + id_len;
+    if bytes.len() < id_end {
+        return Err("truncated relayed frame");
+    }
+    let from_player_id = std::str::from_utf8(&bytes[1..id_end])
+        .map_err(|_| "invalid from_player_id utf8")?
+        .to_string();
+    Ok((from_player_id, bytes[id_end..].to_vec()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relayed_frame_roundtrip() {
+        let payload = b"{\"type\":\"input\"}".to_vec();
+        let frame = encode_server_relayed("abc-123", &payload).unwrap();
+        let (from, got) = decode_server_relayed(&frame).unwrap();
+        assert_eq!(from, "abc-123");
+        assert_eq!(got, payload);
+    }
 }
