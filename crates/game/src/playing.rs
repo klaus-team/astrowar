@@ -16,6 +16,13 @@ const INPUT_HZ: f32 = 30.0;
 const FIRE_COOLDOWN: f32 = 0.22;
 const ASTEROID_SPAWN_BASE: f32 = 1.1;
 const HORIZON_Y: f32 = SHIP_Y_MIN - 24.0;
+/// Visual dashed line ~½ ship-height above the resting shooter's top edge.
+const SHIP_HEIGHT: f32 = 30.0;
+const SHIP_REST_Y: f32 = SHIP_Y_MIN + 20.0;
+const HORIZON_LINE_Y: f32 = SHIP_REST_Y + SHIP_HEIGHT; // top of ship + ½ block
+const HORIZON_DASH_W: f32 = 16.0;
+const HORIZON_DASH_GAP: f32 = 10.0;
+const HORIZON_DASH_H: f32 = 2.0;
 const PENDING_INPUT_CAP: usize = 180;
 const STARTING_LIVES: u8 = 3;
 
@@ -41,6 +48,9 @@ pub struct AsteroidSprite {
 
 #[derive(Component)]
 pub struct PlayingHud;
+
+#[derive(Component)]
+pub struct HorizonDash;
 
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub enum HudSlot {
@@ -216,6 +226,29 @@ pub fn spawn_playing_hud(
         ));
     }
 
+    spawn_horizon_line(&mut commands);
+}
+
+fn spawn_horizon_line(commands: &mut Commands) {
+    let color = Color::srgba(0.42, 0.45, 0.52, 0.45);
+    let mut x = -PLAY_AREA_X;
+    while x < PLAY_AREA_X {
+        let remaining = PLAY_AREA_X - x;
+        let w = HORIZON_DASH_W.min(remaining);
+        if w < 2.0 {
+            break;
+        }
+        commands.spawn((
+            HorizonDash,
+            Sprite {
+                color,
+                custom_size: Some(Vec2::new(w, HORIZON_DASH_H)),
+                ..default()
+            },
+            Transform::from_xyz(x + w * 0.5, HORIZON_LINE_Y, 0.4),
+        ));
+        x += HORIZON_DASH_W + HORIZON_DASH_GAP;
+    }
 }
 
 pub fn cleanup_playing(
@@ -225,6 +258,7 @@ pub fn cleanup_playing(
     local_bullets: Query<Entity, With<LocalBulletSprite>>,
     asteroids: Query<Entity, With<AsteroidSprite>>,
     hud: Query<Entity, With<PlayingHud>>,
+    horizon: Query<Entity, With<HorizonDash>>,
     mut host: ResMut<HostSim>,
     mut latest: ResMut<LatestState>,
     mut input_throttle: ResMut<InputThrottle>,
@@ -236,6 +270,7 @@ pub fn cleanup_playing(
         .chain(local_bullets.iter())
         .chain(asteroids.iter())
         .chain(hud.iter())
+        .chain(horizon.iter())
     {
         commands.entity(entity).despawn();
     }
@@ -278,7 +313,7 @@ pub fn seed_ships_from_room(host: &mut HostSim, room: &RoomInfo) {
             SimShip {
                 nickname: player.nickname.clone(),
                 x: offset,
-                y: SHIP_Y_MIN + 20.0,
+                y: SHIP_REST_Y,
                 move_x: 0,
                 move_y: 0,
                 last_input_seq: 0,
