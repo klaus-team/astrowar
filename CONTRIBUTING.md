@@ -48,6 +48,17 @@ English is required for code, documentation, commit messages, branch names, and 
   Matching titles produce a bot commit on `main` (`chore: bump version to X.Y.Z`)
   and git tag `vX.Y.Z`. Releases and server deploy should key off that tag only.
 
+  Pushing a `v*` tag runs `.github/workflows/release.yml`, which attaches portable
+  client zips to the GitHub Release:
+
+  - `astrowar-linux-x86_64.zip`
+  - `astrowar-windows-x86_64.zip`
+  - `astrowar-macos-universal.zip` (`.app` + `LICENSE`)
+
+  Official builds embed the default relay URL from the repository secret
+  `ASTROWAR_DEFAULT_SERVER_URL` at compile time (runtime env still overrides).
+  If the secret is unset, the client falls back to `ws://127.0.0.1:8080/ws`.
+
   If `main` is branch-protected, allow `github-actions[bot]` to push (or use a
   fine-grained PAT stored as a secret) so the bump commit can land.
 

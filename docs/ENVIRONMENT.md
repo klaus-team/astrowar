@@ -14,7 +14,8 @@
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ASTROWAR_DEFAULT_SERVER_URL` | `ws://127.0.0.1:8080/ws` | Build/runtime default WebSocket URL |
+| `ASTROWAR_DEFAULT_SERVER_URL` | `ws://127.0.0.1:8080/ws` | Runtime override, else compile-time `option_env!`, else this default |
 
-Players may override the server URL in the client. The env value is the default
-shipped with a given build.
+Players may override the server URL in the client UI. Official release builds can
+bake a default via the `ASTROWAR_DEFAULT_SERVER_URL` compile-time env (set from
+CI secrets); a non-empty runtime env still wins.
