@@ -8,3 +8,4 @@
 .cargo-cache/
 temp/
 dist/
+.local/

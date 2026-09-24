@@ -1,9 +1,10 @@
 //! Persist the last confirmed nickname on the local machine.
 
+use crate::storage::data_file;
 use std::fs;
-use std::path::PathBuf;
 
 const DEFAULT_NICKNAME: &str = "Player";
+const FILE_NAME: &str = "last_nickname";
 
 pub fn resolve_or_default(nickname: &str) -> String {
     let trimmed = nickname.trim();
@@ -14,17 +15,8 @@ pub fn resolve_or_default(nickname: &str) -> String {
     }
 }
 
-fn storage_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
-    let mut dir = PathBuf::from(home);
-    dir.push(".local");
-    dir.push("share");
-    dir.push("astrowar");
-    Some(dir.join("last_nickname"))
-}
-
 pub fn load_last_nickname() -> Option<String> {
-    let path = storage_path()?;
+    let path = data_file(FILE_NAME)?;
     let raw = fs::read_to_string(path).ok()?;
     let trimmed = raw.trim();
     if trimmed.is_empty() || trimmed.len() > 24 {
@@ -39,7 +31,7 @@ pub fn save_last_nickname(nickname: &str) {
     if trimmed.is_empty() || trimmed.len() > 24 {
         return;
     }
-    let Some(path) = storage_path() else {
+    let Some(path) = data_file(FILE_NAME) else {
         return;
     };
     if let Some(parent) = path.parent() {

@@ -1,5 +1,6 @@
 use crate::board::PLAY_AREA_X;
 use crate::game_sync::{AsteroidKind, AsteroidState, BulletState, GameMessage, ShipState};
+use crate::highscores::HighScores;
 use crate::net_bridge::{NetBridge, NetCommand};
 use crate::Session;
 use bevy::prelude::*;
@@ -147,7 +148,12 @@ pub struct LocalBullet {
     pub y: f32,
 }
 
-pub fn spawn_playing_hud(mut commands: Commands, _session: Res<Session>) {
+pub fn spawn_playing_hud(
+    mut commands: Commands,
+    _session: Res<Session>,
+    mut high_scores: ResMut<HighScores>,
+) {
+    high_scores.reset_match_flag();
     let font = TextFont {
         font_size: 20.0,
         ..default()
@@ -476,6 +482,13 @@ pub fn playing_host_simulate(
         }
         resolve_collisions(&mut host, session.player_id.as_deref());
         if spinner_crossed_horizon(&host.asteroids) {
+            host.match_over = true;
+            for ship in host.ships.values_mut() {
+                ship.move_x = 0;
+                ship.move_y = 0;
+            }
+        }
+        if all_players_eliminated(&host) {
             host.match_over = true;
             for ship in host.ships.values_mut() {
                 ship.move_x = 0;
@@ -1342,6 +1355,54 @@ pub fn sync_world_sprites(
             HudSlot::Leave => "[Esc] Leave".to_string(),
         });
     }
+}
+
+/// Persist the local player's score once when the match ends.
+pub fn maybe_record_high_score(
+    session: Res<Session>,
+    latest: Res<LatestState>,
+    host: Res<HostSim>,
+    mut high_scores: ResMut<HighScores>,
+) {
+    let match_over = latest.match_over || (session.is_owner && host.match_over);
+    if !match_over {
+        return;
+    }
+    record_local_high_score(&session, &latest, &host, &mut high_scores);
+}
+
+pub fn record_local_high_score(
+    session: &Session,
+    latest: &LatestState,
+    host: &HostSim,
+    high_scores: &mut HighScores,
+) {
+    let Some(player_id) = session.player_id.as_deref() else {
+        return;
+    };
+
+    let (nickname, score) = if let Some(ship) = latest
+        .to_ships
+        .iter()
+        .chain(latest.from_ships.iter())
+        .find(|s| s.player_id == player_id)
+    {
+        (ship.nickname.clone(), ship.score)
+    } else if let Some(ship) = host.ships.get(player_id) {
+        (ship.nickname.clone(), ship.score)
+    } else {
+        return;
+    };
+
+    high_scores.consider_score(&nickname, score);
+}
+
+fn all_players_eliminated(host: &HostSim) -> bool {
+    !host.ships.is_empty()
+        && host
+            .ships
+            .values()
+            .all(|ship| !ship.alive || ship.forfeited)
 }
 
 fn color_for_id(player_id: &str) -> Color {

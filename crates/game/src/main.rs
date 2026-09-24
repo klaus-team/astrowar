@@ -1,20 +1,24 @@
 mod board;
 mod game_sync;
+mod highscores;
 mod net_bridge;
 mod nickname;
 mod playing;
+mod storage;
 
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
 use board::{setup_board_camera, update_board_viewport};
 use game_sync::GameMessage;
+use highscores::HighScores;
 use net_bridge::{NetBridge, NetCommand, NetEvent};
 use nickname::{load_last_nickname, resolve_or_default, save_last_nickname};
 use playing::{
     advance_interpolation, begin_host_sim, cleanup_playing, handle_relayed_game_message,
-    mark_player_forfeit, playing_client_local_hits, playing_host_simulate, playing_predict_local,
-    playing_send_input, seed_ships_from_room, send_game, snapshot, spawn_playing_hud,
-    sync_world_sprites, HostSim, InputThrottle, LatestState, LocalPrediction,
+    mark_player_forfeit, maybe_record_high_score, playing_client_local_hits,
+    playing_host_simulate, playing_predict_local, playing_send_input, record_local_high_score,
+    seed_ships_from_room, send_game, snapshot, spawn_playing_hud, sync_world_sprites, HostSim,
+    InputThrottle, LatestState, LocalPrediction,
 };
 use protocol::{
     GameDurationMinutes, GameMode, PlayerInfo, RoomInfo, RoomPhase, MAX_PLAYERS,
@@ -36,6 +40,7 @@ fn main() {
         .insert_resource(LatestState::default())
         .insert_resource(InputThrottle::default())
         .insert_resource(LocalPrediction::default())
+        .insert_resource(HighScores::default())
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "AstroWar".into(),
@@ -81,6 +86,7 @@ fn main() {
                 playing_host_simulate.run_if(in_state(AppState::Playing)),
                 advance_interpolation.run_if(in_state(AppState::Playing)),
                 playing_client_local_hits.run_if(in_state(AppState::Playing)),
+                maybe_record_high_score.run_if(in_state(AppState::Playing)),
                 sync_world_sprites.run_if(in_state(AppState::Playing)),
             ),
         )
@@ -218,17 +224,19 @@ fn spawn_main_menu(
     mut commands: Commands,
     settings: Res<ClientSettings>,
     status: Res<StatusMessage>,
+    high_scores: Res<HighScores>,
 ) {
     let status_line = if status.text.is_empty() {
         String::new()
     } else {
         format!("\nLast status: {}\n", status.text)
     };
+    let scores = high_scores.menu_block();
     spawn_screen(
         &mut commands,
         "ASTROWAR",
         format!(
-            "Server: {}{status_line}\n[1] Solo (offline)\n[2] Host internet room\n[3] Join with code\n[Esc] Quit",
+            "Server: {}{status_line}\n[1] Solo (offline)\n[2] Host internet room\n[3] Join with code\n[Esc] Quit{scores}",
             settings.server_url
         ),
     );
@@ -687,8 +695,13 @@ fn handle_playing_input(
     mut status: ResMut<StatusMessage>,
     mut next_state: ResMut<NextState<AppState>>,
     bridge: Res<NetBridge>,
+    latest: Res<LatestState>,
+    host: Res<HostSim>,
+    mut high_scores: ResMut<HighScores>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
+        // Capture score before clearing the session (leave happens this frame).
+        record_local_high_score(&session, &latest, &host, &mut high_scores);
         let was_solo = session.solo;
         session.accept_connection = false;
         status.text.clear();
