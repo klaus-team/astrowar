@@ -21,8 +21,9 @@ use playing::{
     advance_interpolation, begin_host_sim, cleanup_playing, handle_relayed_game_message,
     mark_player_forfeit, maybe_record_high_score, playing_client_local_hits,
     playing_host_simulate, playing_predict_local, playing_send_input, record_local_high_score,
-    seed_ships_from_room, send_game, snapshot, spawn_playing_hud, sync_world_sprites, HostSim,
-    InputThrottle, LatestState, LocalPrediction, MatchOverReturn,
+    seed_ships_from_room, send_game, snapshot, spawn_playing_hud, sync_world_sprites,
+    watch_hurt_flash, HostSim, HurtFlash, InputThrottle, LatestState, LocalPrediction,
+    MatchOverReturn,
 };
 use protocol::{
     GameDurationMinutes, GameMode, PlayerInfo, RoomInfo, RoomPhase, MAX_PLAYERS,
@@ -46,6 +47,7 @@ fn main() {
         .insert_resource(LocalPrediction::default())
         .insert_resource(HighScores::default())
         .insert_resource(MatchOverReturn::default())
+        .insert_resource(HurtFlash::default())
         .add_event::<SfxTrigger>()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -103,6 +105,7 @@ fn main() {
                 playing_client_local_hits.run_if(in_state(AppState::Playing)),
                 maybe_record_high_score.run_if(in_state(AppState::Playing)),
                 sync_spinner_hum.run_if(in_state(AppState::Playing)),
+                watch_hurt_flash.run_if(in_state(AppState::Playing)),
                 sync_world_sprites.run_if(in_state(AppState::Playing)),
                 play_sfx_triggers,
             ),
@@ -206,6 +209,11 @@ fn setup_net_bridge(mut commands: Commands) {
 }
 
 fn spawn_screen(commands: &mut Commands, title: &str, body: String) {
+    let title_color = if title.eq_ignore_ascii_case("ASTROWAR") {
+        Color::srgb(1.0, 1.0, 1.0)
+    } else {
+        Color::srgb(0.85, 0.9, 1.0)
+    };
     commands
         .spawn((
             UiRoot,
@@ -227,7 +235,7 @@ fn spawn_screen(commands: &mut Commands, title: &str, body: String) {
                     font_size: 48.0,
                     ..default()
                 },
-                TextColor(Color::srgb(0.85, 0.9, 1.0)),
+                TextColor(title_color),
             ));
             parent.spawn((
                 DynamicText,
@@ -241,9 +249,37 @@ fn spawn_screen(commands: &mut Commands, title: &str, body: String) {
         });
 }
 
+/// Show only host/domain from a WebSocket URL (no scheme, port, or path).
+fn server_host_label(url: &str) -> String {
+    let trimmed = url.trim();
+    let without_scheme = trimmed
+        .strip_prefix("ws://")
+        .or_else(|| trimmed.strip_prefix("wss://"))
+        .or_else(|| trimmed.strip_prefix("http://"))
+        .or_else(|| trimmed.strip_prefix("https://"))
+        .unwrap_or(trimmed);
+    let hostport = without_scheme
+        .split('/')
+        .next()
+        .unwrap_or(without_scheme)
+        .trim();
+    if hostport.is_empty() {
+        return trimmed.to_string();
+    }
+    if let Some(rest) = hostport.strip_prefix('[') {
+        // IPv6: [2001:db8::1]:8080
+        return rest.split(']').next().unwrap_or(rest).to_string();
+    }
+    match hostport.rfind(':') {
+        Some(i) if hostport[i + 1..].chars().all(|c| c.is_ascii_digit()) => {
+            hostport[..i].to_string()
+        }
+        _ => hostport.to_string(),
+    }
+}
+
 fn spawn_main_menu(
     mut commands: Commands,
-    settings: Res<ClientSettings>,
     status: Res<StatusMessage>,
     high_scores: Res<HighScores>,
 ) {
@@ -257,8 +293,7 @@ fn spawn_main_menu(
         &mut commands,
         "ASTROWAR",
         format!(
-            "Server: {}{status_line}\n[1] Solo (offline)\n[2] Host internet room\n[3] Join with code\n[Esc] Quit{scores}",
-            settings.server_url
+            "{status_line}[1] Solo (offline)\n[2] Host internet room\n[3] Join with code\n[Esc] Quit{scores}"
         ),
     );
 }
@@ -351,7 +386,7 @@ fn host_setup_body(
     };
     format!(
         "Server: {}{status_line}\n{nick_mark} Nickname: {}\n{dur_mark} Duration: {}\n\n[Tab] Switch field\n[Left/Right] Change duration\n[Enter] Create room\n[Esc] Back",
-        settings.server_url,
+        server_host_label(&settings.server_url),
         form.nickname,
         form.duration().label(),
     )
@@ -371,7 +406,9 @@ fn join_setup_body(
     };
     format!(
         "Server: {}{status_line}\n{nick_mark} Nickname: {}\n{code_mark} Room code: {}\n\nNicknames must be unique in the room.\n[Tab] Switch field\n[Enter] Join room\n[Esc] Back",
-        settings.server_url, form.nickname, form.code,
+        server_host_label(&settings.server_url),
+        form.nickname,
+        form.code,
     )
 }
 

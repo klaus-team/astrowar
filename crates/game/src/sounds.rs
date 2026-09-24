@@ -12,6 +12,7 @@ pub struct SoundBank {
     pub shot: Handle<AudioSource>,
     pub destroy: Handle<AudioSource>,
     pub spinner: Handle<AudioSource>,
+    pub shock: Handle<AudioSource>,
 }
 
 #[derive(Event, Clone, Copy, Debug)]
@@ -40,6 +41,7 @@ pub fn setup_sounds(mut commands: Commands, mut audio: ResMut<Assets<AudioSource
         shot: audio.add(make_shot()),
         destroy: audio.add(make_destroy()),
         spinner: audio.add(make_spinner_pulse()),
+        shock: audio.add(make_shock()),
     });
     commands.init_resource::<SpinnerAlert>();
 }
@@ -142,6 +144,28 @@ fn make_spinner_pulse() -> AudioSource {
         let freq = 520.0 + 380.0 * (t / 0.12);
         let s = (t * freq * std::f32::consts::TAU).sin() * env * 0.65;
         samples.push(s);
+    }
+    pcm_wav(&samples)
+}
+
+fn make_shock() -> AudioSource {
+    // Loud electric zap — high buzz + noise snap so it cuts through other SFX.
+    let n = (SAMPLE_RATE as f32 * 0.22) as usize;
+    let mut samples = Vec::with_capacity(n);
+    let mut noise = 0xBADC0DE_u32;
+    for i in 0..n {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let env = if t < 0.02 {
+            t / 0.02
+        } else {
+            (1.0 - (t - 0.02) / 0.20).clamp(0.0, 1.0).powf(0.7)
+        };
+        noise = noise.wrapping_mul(1664525).wrapping_add(1013904223);
+        let nsample = ((noise >> 16) as i16 as f32) / i16::MAX as f32;
+        let buzz = (t * 1800.0 * std::f32::consts::TAU).sin()
+            * (t * 55.0 * std::f32::consts::TAU).sin().abs();
+        let snap = (t * 320.0 * std::f32::consts::TAU).sin() * (1.0 - t / 0.08).clamp(0.0, 1.0);
+        samples.push((nsample * 0.45 + buzz * 0.55 + snap * 0.35) * env * 0.95);
     }
     pcm_wav(&samples)
 }

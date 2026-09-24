@@ -3,7 +3,8 @@ use crate::game_sync::{AsteroidKind, AsteroidState, BulletState, GameMessage, Sh
 use crate::highscores::HighScores;
 use crate::net_bridge::{NetBridge, NetCommand};
 use crate::shapes::ShapeMeshes;
-use crate::sounds::SfxTrigger;
+use crate::sounds::{SfxTrigger, SoundBank};
+use bevy::audio::{AudioPlayer, PlaybackSettings, Volume};
 use crate::Session;
 use bevy::prelude::*;
 use bevy::sprite::{ColorMaterial, MeshMaterial2d};
@@ -190,14 +191,92 @@ impl MatchOverReturn {
     }
 }
 
+/// Local ship blink + shock after losing a life.
+#[derive(Resource)]
+pub struct HurtFlash {
+    pub remaining: f32,
+    last_lives: Option<u8>,
+}
+
+impl Default for HurtFlash {
+    fn default() -> Self {
+        Self {
+            remaining: 0.0,
+            last_lives: None,
+        }
+    }
+}
+
+impl HurtFlash {
+    const DURATION: f32 = 1.0;
+
+    pub fn reset(&mut self) {
+        self.remaining = 0.0;
+        self.last_lives = None;
+    }
+
+    pub fn trigger(&mut self) {
+        self.remaining = Self::DURATION;
+    }
+
+    pub fn visible(&self) -> bool {
+        if self.remaining <= 0.0 {
+            return true;
+        }
+        // ~6.25 Hz blink
+        ((self.remaining * 12.5) as i32) % 2 == 0
+    }
+}
+
+/// Detect local life loss → shock SFX + ship blink.
+pub fn watch_hurt_flash(
+    mut commands: Commands,
+    time: Res<Time>,
+    session: Res<Session>,
+    latest: Res<LatestState>,
+    bank: Res<SoundBank>,
+    mut hurt: ResMut<HurtFlash>,
+) {
+    if hurt.remaining > 0.0 {
+        hurt.remaining = (hurt.remaining - time.delta_secs()).max(0.0);
+    }
+
+    let Some(local_id) = session.player_id.as_deref() else {
+        return;
+    };
+    let Some(ship) = latest
+        .to_ships
+        .iter()
+        .find(|s| s.player_id == local_id)
+        .or_else(|| latest.from_ships.iter().find(|s| s.player_id == local_id))
+    else {
+        return;
+    };
+
+    match hurt.last_lives {
+        Some(prev) if ship.lives < prev => {
+            hurt.trigger();
+            // Play immediately here — don't rely on SfxTrigger event ordering.
+            commands.spawn((
+                AudioPlayer::new(bank.shock.clone()),
+                PlaybackSettings::DESPAWN.with_volume(Volume::new(0.9)),
+            ));
+        }
+        _ => {}
+    }
+    hurt.last_lives = Some(ship.lives);
+}
+
 pub fn spawn_playing_hud(
     mut commands: Commands,
     _session: Res<Session>,
     mut high_scores: ResMut<HighScores>,
     mut match_over_return: ResMut<MatchOverReturn>,
+    mut hurt_flash: ResMut<HurtFlash>,
 ) {
     high_scores.reset_match_flag();
     match_over_return.reset();
+    hurt_flash.reset();
     let font = TextFont {
         font_size: 20.0,
         ..default()
@@ -1274,6 +1353,7 @@ pub fn sync_world_sprites(
     mut hud: Query<(&HudSlot, &mut Text), With<PlayingHud>>,
     session: Res<Session>,
     match_over_return: Res<MatchOverReturn>,
+    hurt_flash: Res<HurtFlash>,
 ) {
     let mut rendered_ships = if session.is_owner {
         latest.to_ships.clone()
@@ -1298,12 +1378,18 @@ pub fn sync_world_sprites(
         }
     }
 
+    let local_id = session.player_id.as_deref();
+    let blink_hide = !hurt_flash.visible();
     let mut seen_ships = Vec::new();
     for ship in &rendered_ships {
         seen_ships.push(ship.player_id.clone());
+        let is_local = local_id.is_some_and(|id| ship.player_id == id);
         let mut color = color_for_id(&ship.player_id);
         if !ship.alive || ship.forfeited {
             color = Color::srgba(0.35, 0.35, 0.4, 0.45);
+        }
+        if is_local && blink_hide && ship.alive && !ship.forfeited {
+            color = Color::srgba(0.0, 0.0, 0.0, 0.0);
         }
         if let Some((_, _, mut transform, material)) = ships
             .iter_mut()
@@ -1332,7 +1418,6 @@ pub fn sync_world_sprites(
         }
     }
 
-    let local_id = session.player_id.as_deref();
     let hide_own_net_bullets = !session.is_owner;
     let mut seen_bullets = Vec::new();
     for bullet in &latest.bullets {
