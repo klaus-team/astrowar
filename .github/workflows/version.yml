@@ -1,0 +1,93 @@
+name: Version
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: version-on-main
+  cancel-in-progress: false
+
+jobs:
+  bump-and-tag:
+    name: Bump version and tag on merge
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Skip when title does not bump
+        id: gate
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          SHOULD=$(node .github/scripts/update-version.mjs "$PR_TITLE" --should-tag)
+          echo "should=$SHOULD" >> "$GITHUB_OUTPUT"
+          if [ "$SHOULD" != "yes" ]; then
+            echo "PR title does not request a semver bump; skipping."
+          fi
+
+      - name: Bump, commit, tag, and push
+        if: steps.gate.outputs.should == 'yes'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git checkout -B main origin/main
+
+            BEFORE=$(node -e '
+              const fs = require("fs");
+              const toml = fs.readFileSync("Cargo.toml", "utf8");
+              const block = toml.match(/\[workspace\.package\][\s\S]*?(?=\n\[|$)/)[0];
+              console.log(block.match(/version\s*=\s*"([^"]+)"/)[1]);
+            ')
+
+            node .github/scripts/update-version.mjs "$PR_TITLE"
+
+            AFTER=$(node -e '
+              const fs = require("fs");
+              const toml = fs.readFileSync("Cargo.toml", "utf8");
+              const block = toml.match(/\[workspace\.package\][\s\S]*?(?=\n\[|$)/)[0];
+              console.log(block.match(/version\s*=\s*"([^"]+)"/)[1]);
+            ')
+
+            if [ "$BEFORE" = "$AFTER" ]; then
+              echo "Version unchanged (${AFTER}); nothing to commit."
+              exit 0
+            fi
+
+            git add Cargo.toml Cargo.lock
+            git commit -m "chore: bump version to ${AFTER}"
+
+            TAG="v${AFTER}"
+            if git rev-parse "${TAG}" >/dev/null 2>&1; then
+              echo "Tag ${TAG} already exists; aborting to avoid overwrite."
+              exit 1
+            fi
+            git tag "${TAG}"
+
+            if git push origin main && git push origin "refs/tags/${TAG}"; then
+              echo "Pushed main and ${TAG}"
+              exit 0
+            fi
+
+            echo "Push rejected (attempt ${attempt}); resetting and retrying against latest main"
+            git tag -d "${TAG}" || true
+            git reset --hard origin/main
+          done
+
+          echo "Failed to push version bump after retries"
+          exit 1

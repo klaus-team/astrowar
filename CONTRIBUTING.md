@@ -35,6 +35,21 @@ English is required for code, documentation, commit messages, branch names, and 
 - Include env or Docker notes when relevant
 - Self-check against [docs/CODE_REVIEW_GUIDE.md](docs/CODE_REVIEW_GUIDE.md)
 - Contributions should make sense for the reference server and official client; forks may diverge freely under MIT
+- **PR title drives the semver bump** after merge into `main` (not on the PR
+  branch). Concurrent PRs can stay open without colliding on version commits.
+
+  | Title prefix | Bump |
+  | ------------ | ---- |
+  | `feat:` / `feat(` | minor |
+  | `fix:` / `refactor:` / `perf:` / `style:` (and `fix(` …) | patch |
+  | `breaking:` or `type!:` / `type(scope)!:` | major |
+  | `docs:`, `chore:`, `ci:`, `test:`, … | no bump |
+
+  Matching titles produce a bot commit on `main` (`chore: bump version to X.Y.Z`)
+  and git tag `vX.Y.Z`. Releases and server deploy should key off that tag only.
+
+  If `main` is branch-protected, allow `github-actions[bot]` to push (or use a
+  fine-grained PAT stored as a secret) so the bump commit can land.
 
 ## Reporting issues
 
