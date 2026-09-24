@@ -5,6 +5,7 @@ mod net_bridge;
 mod nickname;
 mod playing;
 mod shapes;
+mod sounds;
 mod storage;
 
 use bevy::input::keyboard::{Key, KeyboardInput};
@@ -15,6 +16,7 @@ use highscores::HighScores;
 use net_bridge::{NetBridge, NetCommand, NetEvent};
 use nickname::{load_last_nickname, resolve_or_default, save_last_nickname};
 use shapes::setup_shape_meshes;
+use sounds::{play_sfx_triggers, setup_sounds, sync_spinner_hum, SfxTrigger};
 use playing::{
     advance_interpolation, begin_host_sim, cleanup_playing, handle_relayed_game_message,
     mark_player_forfeit, maybe_record_high_score, playing_client_local_hits,
@@ -43,6 +45,7 @@ fn main() {
         .insert_resource(InputThrottle::default())
         .insert_resource(LocalPrediction::default())
         .insert_resource(HighScores::default())
+        .add_event::<SfxTrigger>()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "AstroWar".into(),
@@ -52,7 +55,10 @@ fn main() {
             ..default()
         }))
         .init_state::<AppState>()
-        .add_systems(Startup, (setup_board_camera, setup_net_bridge, setup_shape_meshes))
+        .add_systems(
+            Startup,
+            (setup_board_camera, setup_net_bridge, setup_shape_meshes, setup_sounds),
+        )
         .add_systems(OnEnter(AppState::MainMenu), spawn_main_menu)
         .add_systems(OnEnter(AppState::SoloSetup), spawn_solo_setup)
         .add_systems(OnEnter(AppState::HostSetup), spawn_host_setup)
@@ -86,10 +92,17 @@ fn main() {
                 playing_predict_local.run_if(in_state(AppState::Playing)),
                 playing_send_input.run_if(in_state(AppState::Playing)),
                 playing_host_simulate.run_if(in_state(AppState::Playing)),
+            ),
+        )
+        .add_systems(
+            Update,
+            (
                 advance_interpolation.run_if(in_state(AppState::Playing)),
                 playing_client_local_hits.run_if(in_state(AppState::Playing)),
                 maybe_record_high_score.run_if(in_state(AppState::Playing)),
+                sync_spinner_hum.run_if(in_state(AppState::Playing)),
                 sync_world_sprites.run_if(in_state(AppState::Playing)),
+                play_sfx_triggers,
             ),
         )
         .run();
@@ -465,6 +478,7 @@ fn handle_main_menu_input(
     mut join_form: ResMut<JoinForm>,
     mut intent: ResMut<ConnectIntent>,
     settings: Res<ClientSettings>,
+    mut sfx: EventWriter<SfxTrigger>,
 ) {
     if keys.just_pressed(KeyCode::Digit1) {
         status.text.clear();
@@ -472,6 +486,7 @@ fn handle_main_menu_input(
         // Prefill only when a saved nick exists; otherwise keep blank.
         host_form.nickname = settings.nickname.clone();
         host_form.focus_nickname = true;
+        sfx.send(SfxTrigger::Shot);
         next_state.set(AppState::SoloSetup);
     }
     if keys.just_pressed(KeyCode::Digit2) {
@@ -480,6 +495,7 @@ fn handle_main_menu_input(
         host_form.nickname = settings.nickname.clone();
         host_form.duration_index %= GameDurationMinutes::ALL.len();
         host_form.focus_nickname = true;
+        sfx.send(SfxTrigger::Shot);
         next_state.set(AppState::HostSetup);
     }
     if keys.just_pressed(KeyCode::Digit3) {
@@ -488,6 +504,7 @@ fn handle_main_menu_input(
         join_form.nickname = settings.nickname.clone();
         join_form.code.clear();
         join_form.focus_nickname = true;
+        sfx.send(SfxTrigger::Shot);
         next_state.set(AppState::JoinSetup);
     }
     if keys.just_pressed(KeyCode::Escape) {
@@ -506,6 +523,7 @@ fn handle_solo_setup_input(
     mut latest: ResMut<LatestState>,
     mut prediction: ResMut<LocalPrediction>,
     mut next_state: ResMut<NextState<AppState>>,
+    mut sfx: EventWriter<SfxTrigger>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         next_state.set(AppState::MainMenu);
@@ -536,6 +554,7 @@ fn handle_solo_setup_input(
         settings.nickname = nickname.clone();
         save_last_nickname(&nickname);
         status.text.clear();
+        sfx.send(SfxTrigger::Shot);
         start_solo_match(
             &mut session,
             &mut host,
@@ -558,6 +577,7 @@ fn handle_host_setup_input(
     mut intent: ResMut<ConnectIntent>,
     mut next_state: ResMut<NextState<AppState>>,
     bridge: Res<NetBridge>,
+    mut sfx: EventWriter<SfxTrigger>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         *intent = ConnectIntent::None;
@@ -591,6 +611,7 @@ fn handle_host_setup_input(
         session.accept_connection = true;
         *intent = ConnectIntent::Host;
         status.text = "Creating room...".into();
+        sfx.send(SfxTrigger::Shot);
         bridge.send(NetCommand::ConnectAndCreate {
             url: settings.server_url.clone(),
             nickname,
@@ -610,6 +631,7 @@ fn handle_join_setup_input(
     mut intent: ResMut<ConnectIntent>,
     mut next_state: ResMut<NextState<AppState>>,
     bridge: Res<NetBridge>,
+    mut sfx: EventWriter<SfxTrigger>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         *intent = ConnectIntent::None;
@@ -644,6 +666,7 @@ fn handle_join_setup_input(
         session.accept_connection = true;
         *intent = ConnectIntent::Join;
         status.text = format!("Joining {code}...");
+        sfx.send(SfxTrigger::Shot);
         bridge.send(NetCommand::ConnectAndJoin {
             url: settings.server_url.clone(),
             nickname,
@@ -678,6 +701,7 @@ fn handle_lobby_input(
     mut status: ResMut<StatusMessage>,
     mut next_state: ResMut<NextState<AppState>>,
     bridge: Res<NetBridge>,
+    mut sfx: EventWriter<SfxTrigger>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         session.accept_connection = false;
@@ -692,6 +716,7 @@ fn handle_lobby_input(
     }
     if keys.just_pressed(KeyCode::Enter) && session.is_owner {
         status.text = "Starting match...".into();
+        sfx.send(SfxTrigger::Shot);
         bridge.send(NetCommand::StartGame);
     }
 }
@@ -804,6 +829,7 @@ fn poll_net_events(
     mut host: ResMut<HostSim>,
     mut latest: ResMut<LatestState>,
     mut prediction: ResMut<LocalPrediction>,
+    mut sfx: EventWriter<SfxTrigger>,
 ) {
     while let Some(event) = bridge.poll() {
         match event {
@@ -882,6 +908,7 @@ fn poll_net_events(
                     &mut latest,
                     &mut prediction,
                     &bridge,
+                    &mut sfx,
                 );
             }
             NetEvent::Error(message) => {

@@ -30,5 +30,5 @@ thiserror = "2"
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 url = "2"
-bevy = { version = "0.15", default-features = true }
+bevy = { version = "0.15", default-features = true, features = ["wav"] }
 dirs = "6"

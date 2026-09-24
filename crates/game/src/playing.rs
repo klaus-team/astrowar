@@ -3,6 +3,7 @@ use crate::game_sync::{AsteroidKind, AsteroidState, BulletState, GameMessage, Sh
 use crate::highscores::HighScores;
 use crate::net_bridge::{NetBridge, NetCommand};
 use crate::shapes::ShapeMeshes;
+use crate::sounds::SfxTrigger;
 use crate::Session;
 use bevy::prelude::*;
 use bevy::sprite::{ColorMaterial, MeshMaterial2d};
@@ -437,6 +438,7 @@ pub fn playing_predict_local(
     session: Res<Session>,
     mut prediction: ResMut<LocalPrediction>,
     latest: Res<LatestState>,
+    mut sfx: EventWriter<SfxTrigger>,
 ) {
     if session.is_owner || !prediction.active || latest.match_over {
         return;
@@ -465,6 +467,7 @@ pub fn playing_predict_local(
             x: bx,
             y: by,
         });
+        sfx.send(SfxTrigger::Shot);
     }
     for bullet in &mut prediction.local_bullets {
         bullet.y += BULLET_SPEED * dt;
@@ -478,6 +481,7 @@ pub fn playing_host_simulate(
     mut host: ResMut<HostSim>,
     mut latest: ResMut<LatestState>,
     bridge: Res<NetBridge>,
+    mut sfx: EventWriter<SfxTrigger>,
 ) {
     if !session.is_owner || !host.active {
         return;
@@ -520,7 +524,11 @@ pub fn playing_host_simulate(
             }
         }
         for player_id in fires {
-            try_fire(&mut host, &player_id);
+            if try_fire(&mut host, &player_id)
+                && session.player_id.as_deref() == Some(player_id.as_str())
+            {
+                sfx.send(SfxTrigger::Shot);
+            }
         }
 
         for bullet in &mut host.bullets {
@@ -531,7 +539,10 @@ pub fn playing_host_simulate(
         for asteroid in &mut host.asteroids {
             integrate_asteroid(asteroid, dt);
         }
-        resolve_collisions(&mut host, session.player_id.as_deref());
+        let destroyed = resolve_collisions(&mut host, session.player_id.as_deref());
+        for _ in 0..destroyed {
+            sfx.send(SfxTrigger::Destroy);
+        }
         if spinner_crossed_horizon(&host.asteroids) {
             host.match_over = true;
             for ship in host.ships.values_mut() {
@@ -586,16 +597,16 @@ pub fn playing_host_simulate(
     }
 }
 
-fn try_fire(host: &mut HostSim, player_id: &str) {
+fn try_fire(host: &mut HostSim, player_id: &str) -> bool {
     let Some(ship) = host.ships.get(player_id) else {
-        return;
+        return false;
     };
     if !ship.alive || ship.forfeited {
-        return;
+        return false;
     }
     let cooldown = host.fire_cooldown.entry(player_id.to_string()).or_insert(0.0);
     if *cooldown > 0.0 {
-        return;
+        return false;
     }
     *cooldown = FIRE_COOLDOWN;
     let id = host.next_bullet_id;
@@ -606,6 +617,7 @@ fn try_fire(host: &mut HostSim, player_id: &str) {
         x: ship.x,
         y: ship.y + 18.0,
     });
+    true
 }
 
 fn spawn_asteroid(host: &mut HostSim) {
@@ -705,7 +717,7 @@ fn pseudo_rand(seed: u32) -> f32 {
     (x & 0xffff) as f32 / 65535.0
 }
 
-fn resolve_collisions(host: &mut HostSim, host_player_id: Option<&str>) {
+fn resolve_collisions(host: &mut HostSim, host_player_id: Option<&str>) -> u32 {
     let mut hit_bullets = Vec::new();
     let mut scored = Vec::new();
 
@@ -723,8 +735,11 @@ fn resolve_collisions(host: &mut HostSim, host_player_id: Option<&str>) {
             }
         }
     }
+    let mut destroyed = 0u32;
     for (owner_id, asteroid_id) in scored {
-        award_asteroid_hit(host, &owner_id, asteroid_id);
+        if award_asteroid_hit(host, &owner_id, asteroid_id) {
+            destroyed += 1;
+        }
     }
     host.bullets.retain(|b| !hit_bullets.contains(&b.id));
 
@@ -768,9 +783,10 @@ fn resolve_collisions(host: &mut HostSim, host_player_id: Option<&str>) {
             }
         }
     }
+    destroyed
 }
 
-fn award_asteroid_hit(host: &mut HostSim, player_id: &str, asteroid_id: u32) {
+fn award_asteroid_hit(host: &mut HostSim, player_id: &str, asteroid_id: u32) -> bool {
     let removed = host
         .asteroids
         .iter()
@@ -790,13 +806,14 @@ fn award_asteroid_hit(host: &mut HostSim, player_id: &str, asteroid_id: u32) {
             .unwrap_or(0)
     };
     if points <= 0 {
-        return;
+        return false;
     }
     if let Some(ship) = host.ships.get_mut(player_id) {
         if ship.alive && !ship.forfeited {
             ship.score += points;
         }
     }
+    true
 }
 
 fn split_large_rock(host: &mut HostSim, parent: &SimAsteroid) {
@@ -824,6 +841,7 @@ pub fn playing_client_local_hits(
     bridge: Res<NetBridge>,
     mut latest: ResMut<LatestState>,
     mut prediction: ResMut<LocalPrediction>,
+    mut sfx: EventWriter<SfxTrigger>,
 ) {
     if session.is_owner || latest.match_over || !prediction.active {
         return;
@@ -859,6 +877,7 @@ pub fn playing_client_local_hits(
     for asteroid_id in hit_asteroids {
         latest.pending_destroyed.insert(asteroid_id);
         send_game(&bridge, &session, &GameMessage::Hit { asteroid_id });
+        sfx.send(SfxTrigger::Destroy);
     }
 }
 
@@ -1114,6 +1133,7 @@ pub fn handle_relayed_game_message(
     latest: &mut LatestState,
     prediction: &mut LocalPrediction,
     bridge: &NetBridge,
+    sfx: &mut EventWriter<SfxTrigger>,
 ) {
     let Ok(message) = GameMessage::from_bytes(payload) else {
         return;
@@ -1181,7 +1201,9 @@ pub fn handle_relayed_game_message(
             if !session.is_owner || host.match_over {
                 return;
             }
-            award_asteroid_hit(host, from_player_id, asteroid_id);
+            if award_asteroid_hit(host, from_player_id, asteroid_id) {
+                sfx.send(SfxTrigger::Destroy);
+            }
         }
     }
 }
