@@ -5,10 +5,12 @@
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ASTROWAR_SERVER_HOST` | `0.0.0.0` | Bind address |
-| `ASTROWAR_SERVER_PORT` | `8080` | Bind port |
+| `ASTROWAR_SERVER_PORT` | `8080` | Bind port inside the container |
 | `ASTROWAR_ROOM_CODE_LENGTH` | `6` | Characters in room codes |
 | `ASTROWAR_ROOM_TTL_SECS` | `3600` | In-memory room lifetime |
 | `RUST_LOG` | `astrowar_server=info,tower_http=info` | Tracing filter |
+| `ASTROWAR_PUBLISH_ADDR` | `127.0.0.1` | Host address published by Compose (use loopback behind a reverse proxy) |
+| `ASTROWAR_HOST_PORT` | `8080` | Host port mapped to container `8080` |
 
 ## Client (`astrowar`)
 

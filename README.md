@@ -54,6 +54,20 @@ make start-client  # run native host binary
 
 `make build` runs `build-server` and `build-client`.
 
+### Persistent server (Compose)
+
+For a VPS behind Apache (or another reverse proxy):
+
+```bash
+cp .env.example .env   # set ASTROWAR_HOST_PORT if 8080 is taken
+docker compose up -d --build
+curl -fsS http://127.0.0.1:${ASTROWAR_HOST_PORT:-8080}/health
+```
+
+Compose publishes on `127.0.0.1` by default (`ASTROWAR_PUBLISH_ADDR`). Proxy
+`/health` and `/ws` to that host port. Production hostnames stay out of the
+repo (DNS, proxy, and CI secrets only).
+
 ### Notes
 
 - Client Docker GUI needs `DISPLAY` and X11 (`/tmp/.X11-unix`). On WSL2, WSLg usually provides this.
