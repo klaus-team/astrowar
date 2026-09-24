@@ -75,6 +75,28 @@ pub fn validate_nickname(nickname: &str) -> Result<String, RoomError> {
     Ok(trimmed.to_string())
 }
 
+/// Next free default nick: `Player`, then `Player2`, `Player3`, ...
+pub fn next_auto_nickname(players: &[PlayerInfo]) -> String {
+    let mut n = 1u32;
+    loop {
+        let candidate = if n == 1 {
+            "Player".to_string()
+        } else {
+            format!("Player{n}")
+        };
+        let taken = players
+            .iter()
+            .any(|p| p.nickname.eq_ignore_ascii_case(&candidate));
+        if !taken {
+            return candidate;
+        }
+        n = n.saturating_add(1);
+        if n > 1000 {
+            return format!("Player{}", players.len() + 1);
+        }
+    }
+}
+
 pub struct RoomStore {
     rooms: HashMap<String, Room>,
     player_to_room: HashMap<String, String>,
@@ -142,20 +164,25 @@ impl RoomStore {
         if self.player_to_room.contains_key(&player_id) {
             return Err(RoomError::AlreadyInRoom);
         }
-        let nickname = validate_nickname(&nickname)?;
         let code = code.trim().to_uppercase();
         let room = self.rooms.get_mut(&code).ok_or(RoomError::NotFound)?;
         if room.info.players.len() as u8 >= room.info.max_players {
             return Err(RoomError::Full);
         }
-        if room
-            .info
-            .players
-            .iter()
-            .any(|p| p.nickname.eq_ignore_ascii_case(&nickname))
-        {
-            return Err(RoomError::NicknameTaken);
-        }
+        let nickname = if nickname.trim().is_empty() {
+            next_auto_nickname(&room.info.players)
+        } else {
+            let nickname = validate_nickname(&nickname)?;
+            if room
+                .info
+                .players
+                .iter()
+                .any(|p| p.nickname.eq_ignore_ascii_case(&nickname))
+            {
+                return Err(RoomError::NicknameTaken);
+            }
+            nickname
+        };
         room.info.players.push(PlayerInfo {
             id: player_id.clone(),
             nickname,

@@ -1,12 +1,15 @@
 mod board;
 mod game_sync;
 mod net_bridge;
+mod nickname;
 mod playing;
 
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
 use board::{setup_board_camera, update_board_viewport};
+use game_sync::GameMessage;
 use net_bridge::{NetBridge, NetCommand, NetEvent};
+use nickname::{load_last_nickname, resolve_or_default, save_last_nickname};
 use playing::{
     advance_interpolation, begin_host_sim, cleanup_playing, handle_relayed_game_message,
     mark_player_forfeit, playing_client_local_hits, playing_host_simulate, playing_predict_local,
@@ -16,14 +19,13 @@ use playing::{
 use protocol::{
     GameDurationMinutes, GameMode, PlayerInfo, RoomInfo, RoomPhase, MAX_PLAYERS,
 };
-use game_sync::GameMessage;
 
 fn main() {
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.01, 0.02, 0.05)))
         .insert_resource(ClientSettings {
             server_url: net::default_server_url(),
-            nickname: "Player".into(),
+            nickname: load_last_nickname().unwrap_or_default(),
         })
         .insert_resource(HostForm::default())
         .insert_resource(JoinForm::default())
@@ -113,7 +115,7 @@ struct HostForm {
 impl Default for HostForm {
     fn default() -> Self {
         Self {
-            nickname: "Player".into(),
+            nickname: String::new(),
             duration_index: 0,
             focus_nickname: true,
         }
@@ -319,7 +321,7 @@ fn host_setup_body(
         format!("\nStatus: {}\n", status.text)
     };
     format!(
-        "Server: {}\n{status_line}\n{nick_mark} Nickname: {}\n{dur_mark} Duration: {} min\n\n[Tab] Switch field\n[Left/Right] Change duration\n[Enter] Create room\n[Esc] Back",
+        "Server: {}{status_line}\n{nick_mark} Nickname: {}\n{dur_mark} Duration: {} min\n\n[Tab] Switch field\n[Left/Right] Change duration\n[Enter] Create room\n[Esc] Back",
         settings.server_url,
         form.nickname,
         form.duration().as_minutes(),
@@ -339,7 +341,7 @@ fn join_setup_body(
         format!("\nStatus: {}\n", status.text)
     };
     format!(
-        "Server: {}\n{status_line}\n{nick_mark} Nickname: {}\n{code_mark} Room code: {}\n\nNicknames must be unique in the room.\n[Tab] Switch field\n[Enter] Join room\n[Esc] Back",
+        "Server: {}{status_line}\n{nick_mark} Nickname: {}\n{code_mark} Room code: {}\n\nNicknames must be unique in the room.\n[Tab] Switch field\n[Enter] Join room\n[Esc] Back",
         settings.server_url, form.nickname, form.code,
     )
 }
@@ -453,6 +455,7 @@ fn handle_main_menu_input(
     if keys.just_pressed(KeyCode::Digit1) {
         status.text.clear();
         *intent = ConnectIntent::None;
+        // Prefill only when a saved nick exists; otherwise keep blank.
         host_form.nickname = settings.nickname.clone();
         host_form.focus_nickname = true;
         next_state.set(AppState::SoloSetup);
@@ -467,7 +470,7 @@ fn handle_main_menu_input(
     if keys.just_pressed(KeyCode::Digit3) {
         status.text.clear();
         *intent = ConnectIntent::Join;
-        join_form.nickname.clear();
+        join_form.nickname = settings.nickname.clone();
         join_form.code.clear();
         join_form.focus_nickname = true;
         next_state.set(AppState::JoinSetup);
@@ -514,12 +517,9 @@ fn handle_solo_setup_input(
         }
     }
     if keys.just_pressed(KeyCode::Enter) {
-        let nickname = form.nickname.trim().to_string();
-        if nickname.is_empty() {
-            status.text = "Nickname is required".into();
-            return;
-        }
+        let nickname = resolve_or_default(&form.nickname);
         settings.nickname = nickname.clone();
+        save_last_nickname(&nickname);
         status.text.clear();
         start_solo_match(
             &mut session,
@@ -570,12 +570,9 @@ fn handle_host_setup_input(
         }
     }
     if keys.just_pressed(KeyCode::Enter) {
-        let nickname = form.nickname.trim().to_string();
-        if nickname.is_empty() {
-            status.text = "Nickname is required".into();
-            return;
-        }
+        let nickname = resolve_or_default(&form.nickname);
         settings.nickname = nickname.clone();
+        save_last_nickname(&nickname);
         session.accept_connection = true;
         *intent = ConnectIntent::Host;
         status.text = "Creating room...".into();
@@ -620,15 +617,15 @@ fn handle_join_setup_input(
     if keys.just_pressed(KeyCode::Enter) {
         let nickname = form.nickname.trim().to_string();
         let code = form.code.trim().to_uppercase();
-        if nickname.is_empty() {
-            status.text = "Nickname is required".into();
-            return;
-        }
         if code.len() < 4 {
             status.text = "Room code is required".into();
             return;
         }
-        settings.nickname = nickname.clone();
+        // Empty → server assigns Player / Player2 / …
+        if !nickname.is_empty() {
+            settings.nickname = nickname.clone();
+            save_last_nickname(&nickname);
+        }
         session.accept_connection = true;
         *intent = ConnectIntent::Join;
         status.text = format!("Joining {code}...");
@@ -780,6 +777,7 @@ fn poll_net_events(
     bridge: Res<NetBridge>,
     mut session: ResMut<Session>,
     mut status: ResMut<StatusMessage>,
+    mut settings: ResMut<ClientSettings>,
     mut next_state: ResMut<NextState<AppState>>,
     current: Res<State<AppState>>,
     intent: Res<ConnectIntent>,
@@ -804,6 +802,7 @@ fn poll_net_events(
                 let player_id = session.player_id.clone().unwrap_or_default();
                 session.is_owner = room.owner_id == player_id;
                 session.solo = false;
+                remember_room_nickname(&mut settings, &player_id, &room);
                 let phase = room.phase;
                 session.room = Some(room.clone());
                 status.text.clear();
@@ -830,6 +829,7 @@ fn poll_net_events(
                 let player_id = session.player_id.clone().unwrap_or_default();
                 session.is_owner = room.owner_id == player_id;
                 session.solo = false;
+                remember_room_nickname(&mut settings, &player_id, &room);
                 session.room = Some(room);
                 status.text.clear();
                 if session.is_owner {
@@ -887,6 +887,13 @@ fn poll_net_events(
                 }
             }
         }
+    }
+}
+
+fn remember_room_nickname(settings: &mut ClientSettings, player_id: &str, room: &RoomInfo) {
+    if let Some(player) = room.players.iter().find(|p| p.id == player_id) {
+        settings.nickname = player.nickname.clone();
+        save_last_nickname(&player.nickname);
     }
 }
 
