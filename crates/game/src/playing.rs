@@ -11,7 +11,6 @@ use protocol::{GameDurationMinutes, RoomInfo};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 const SHIP_Y_MIN: f32 = -330.0;
-const SHIP_Y_MAX: f32 = -220.0;
 const SHIP_SPEED: f32 = 280.0;
 const BULLET_SPEED: f32 = 520.0;
 const STATE_HZ: f32 = 20.0;
@@ -354,28 +353,21 @@ pub fn send_game(bridge: &NetBridge, session: &Session, message: &GameMessage) {
 }
 
 pub fn collect_local_input(keys: &ButtonInput<KeyCode>) -> (i8, i8, bool) {
+    // Sideways only (Astroblast-style): ←/→ or A/D.
     let mut move_x: i8 = 0;
-    let mut move_y: i8 = 0;
     if keys.pressed(KeyCode::ArrowLeft) || keys.pressed(KeyCode::KeyA) {
         move_x -= 1;
     }
     if keys.pressed(KeyCode::ArrowRight) || keys.pressed(KeyCode::KeyD) {
         move_x += 1;
     }
-    if keys.pressed(KeyCode::ArrowDown) || keys.pressed(KeyCode::KeyS) {
-        move_y -= 1;
-    }
-    if keys.pressed(KeyCode::ArrowUp) || keys.pressed(KeyCode::KeyW) {
-        move_y += 1;
-    }
     let fire = keys.just_pressed(KeyCode::Space);
-    (move_x, move_y, fire)
+    (move_x, 0, fire)
 }
 
-fn integrate_ship(x: f32, y: f32, move_x: i8, move_y: i8, dt: f32) -> (f32, f32) {
+fn integrate_ship(x: f32, y: f32, move_x: i8, _move_y: i8, dt: f32) -> (f32, f32) {
     let nx = (x + move_x as f32 * SHIP_SPEED * dt).clamp(-PLAY_AREA_X, PLAY_AREA_X);
-    let ny = (y + move_y as f32 * SHIP_SPEED * dt).clamp(SHIP_Y_MIN, SHIP_Y_MAX);
-    (nx, ny)
+    (nx, y)
 }
 
 pub fn playing_send_input(
@@ -397,7 +389,7 @@ pub fn playing_send_input(
             if let Some(ship) = host.ships.get_mut(player_id) {
                 if ship.alive && !ship.forfeited {
                     ship.move_x = move_x;
-                    ship.move_y = move_y;
+                    ship.move_y = 0;
                     if fire {
                         *host.pending_fire.entry(player_id.clone()).or_default() = true;
                     }
@@ -1083,16 +1075,15 @@ fn interpolate_ships(latest: &LatestState) -> Vec<ShipState> {
                 .find(|ship| ship.player_id == to_ship.player_id)
             {
                 let mut x = from_ship.x + (to_ship.x - from_ship.x) * t;
-                let mut y = from_ship.y + (to_ship.y - from_ship.y) * t;
+                let y = to_ship.y;
                 x = (x + to_ship.move_x as f32 * SHIP_SPEED * extra).clamp(-PLAY_AREA_X, PLAY_AREA_X);
-                y = (y + to_ship.move_y as f32 * SHIP_SPEED * extra).clamp(SHIP_Y_MIN, SHIP_Y_MAX);
                 ShipState {
                     player_id: to_ship.player_id.clone(),
                     nickname: to_ship.nickname.clone(),
                     x,
                     y,
                     move_x: to_ship.move_x,
-                    move_y: to_ship.move_y,
+                    move_y: 0,
                     last_input_seq: to_ship.last_input_seq,
                     score: to_ship.score,
                     lives: to_ship.lives,
@@ -1142,10 +1133,10 @@ pub fn handle_relayed_game_message(
         GameMessage::Input {
             seq,
             move_x,
-            move_y,
+            move_y: _,
             fire,
             x,
-            y,
+            y: _,
         } => {
             if !session.is_owner || host.match_over {
                 return;
@@ -1155,10 +1146,11 @@ pub fn handle_relayed_game_message(
                     if seq >= ship.last_input_seq || ship.last_input_seq.wrapping_sub(seq) > 1000 {
                         ship.last_input_seq = seq;
                         ship.move_x = move_x;
-                        ship.move_y = move_y;
+                        ship.move_y = 0;
                         // Client is visual authority for its ship in idea-2 lite.
+                        // Sideways only — ignore vertical pose from clients.
                         ship.x = x.clamp(-PLAY_AREA_X, PLAY_AREA_X);
-                        ship.y = y.clamp(SHIP_Y_MIN, SHIP_Y_MAX);
+                        ship.y = SHIP_REST_Y;
                     }
                     if fire {
                         *host.pending_fire.entry(from_player_id.to_string()).or_default() = true;
