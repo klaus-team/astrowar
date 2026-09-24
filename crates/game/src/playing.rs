@@ -164,12 +164,40 @@ pub struct LocalBullet {
     pub y: f32,
 }
 
+/// After match over, return to the main menu if the player stays idle.
+#[derive(Resource)]
+pub struct MatchOverReturn {
+    pub timer: Option<Timer>,
+}
+
+impl Default for MatchOverReturn {
+    fn default() -> Self {
+        Self { timer: None }
+    }
+}
+
+impl MatchOverReturn {
+    pub const IDLE_SECS: f32 = 30.0;
+
+    pub fn reset(&mut self) {
+        self.timer = None;
+    }
+
+    pub fn seconds_left(&self) -> Option<u32> {
+        self.timer
+            .as_ref()
+            .map(|t| t.remaining_secs().ceil().max(0.0) as u32)
+    }
+}
+
 pub fn spawn_playing_hud(
     mut commands: Commands,
     _session: Res<Session>,
     mut high_scores: ResMut<HighScores>,
+    mut match_over_return: ResMut<MatchOverReturn>,
 ) {
     high_scores.reset_match_flag();
+    match_over_return.reset();
     let font = TextFont {
         font_size: 20.0,
         ..default()
@@ -1245,6 +1273,7 @@ pub fn sync_world_sprites(
     )>,
     mut hud: Query<(&HudSlot, &mut Text), With<PlayingHud>>,
     session: Res<Session>,
+    match_over_return: Res<MatchOverReturn>,
 ) {
     let mut rendered_ships = if session.is_owner {
         latest.to_ships.clone()
@@ -1453,12 +1482,21 @@ pub fn sync_world_sprites(
         "Competitive".to_string()
     };
 
+    let leave = if latest.match_over {
+        match match_over_return.seconds_left() {
+            Some(secs) => format!("[Esc] Leave · menu in {secs}s"),
+            None => "[Esc] Leave".to_string(),
+        }
+    } else {
+        "[Esc] Leave".to_string()
+    };
+
     for (slot, mut text) in &mut hud {
         *text = Text::new(match slot {
             HudSlot::Title => title.clone(),
             HudSlot::Players => board.clone(),
             HudSlot::Mode => mode.clone(),
-            HudSlot::Leave => "[Esc] Leave".to_string(),
+            HudSlot::Leave => leave.clone(),
         });
     }
 }
