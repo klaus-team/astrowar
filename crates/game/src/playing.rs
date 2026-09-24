@@ -28,6 +28,80 @@ const HORIZON_DASH_GAP: f32 = 10.0;
 const HORIZON_DASH_H: f32 = 2.0;
 const PENDING_INPUT_CAP: usize = 180;
 const STARTING_LIVES: u8 = 3;
+const PHASE_SCORE_STEP: i32 = 500;
+const MAX_PHASE_EFFECT: u8 = 6;
+/// Fast tier: ~+35% fall speed vs normal.
+const SPEED_FAST_MUL: f32 = 1.35;
+/// Zigzag horizontal boost when fast.
+const ZIGZAG_VX_FAST_MUL: f32 = 1.25;
+
+struct PhaseMods {
+    weight_large: f32,
+    weight_small: f32,
+    weight_zigzag: f32,
+    weight_spinner: f32,
+    large_small_fast: bool,
+    zigzag_fast: bool,
+    spinner_fast: bool,
+    spawn_interval_mul: f32,
+}
+
+fn leading_score_sim(ships: &HashMap<String, SimShip>) -> i32 {
+    ships
+        .values()
+        .filter(|s| !s.forfeited)
+        .map(|s| s.score)
+        .max()
+        .unwrap_or(0)
+}
+
+fn leading_score_state(ships: &[ShipState]) -> i32 {
+    ships
+        .iter()
+        .filter(|s| !s.forfeited)
+        .map(|s| s.score)
+        .max()
+        .unwrap_or(0)
+}
+
+fn phase_from_score(score: i32) -> u8 {
+    let score = score.max(0);
+    // Saturating add so huge endless scores still display a phase number.
+    (1u32.saturating_add((score as u32) / PHASE_SCORE_STEP as u32)).min(u32::from(u8::MAX)) as u8
+}
+
+fn phase_mods(phase: u8) -> PhaseMods {
+    // Baseline weights ≈ current threshold shares: L40 / S32 / Z16 / Sp12.
+    let effect = phase.min(MAX_PHASE_EFFECT);
+    let mut mods = PhaseMods {
+        weight_large: 40.0,
+        weight_small: 32.0,
+        weight_zigzag: 16.0,
+        weight_spinner: 12.0,
+        large_small_fast: false,
+        zigzag_fast: false,
+        spinner_fast: false,
+        spawn_interval_mul: 1.0,
+    };
+    if effect >= 2 {
+        mods.weight_large = 52.0;
+        mods.weight_small = 40.0;
+    }
+    if effect >= 3 {
+        mods.large_small_fast = true;
+    }
+    if effect >= 4 {
+        mods.weight_zigzag = 28.0;
+    }
+    if effect >= 5 {
+        mods.zigzag_fast = true;
+    }
+    if effect >= 6 {
+        mods.weight_spinner = 20.0;
+        mods.spawn_interval_mul = 0.85;
+    }
+    mods
+}
 
 #[derive(Component)]
 pub struct ShipSprite {
@@ -675,10 +749,13 @@ pub fn playing_host_simulate(
             (total, host.time_left)
         };
         let elapsed_factor = 1.0 - (remaining / total).clamp(0.0, 1.0);
-        let interval = (ASTEROID_SPAWN_BASE - elapsed_factor * 0.55).clamp(0.4, 1.2);
+        let display_phase = phase_from_score(leading_score_sim(&host.ships));
+        let mods = phase_mods(display_phase.min(MAX_PHASE_EFFECT));
+        let interval = ((ASTEROID_SPAWN_BASE - elapsed_factor * 0.55) * mods.spawn_interval_mul)
+            .clamp(0.35, 1.2);
         if host.spawn_accum >= interval {
             host.spawn_accum = 0.0;
-            spawn_asteroid(&mut host);
+            spawn_asteroid(&mut host, &mods);
         }
     }
 
@@ -722,49 +799,57 @@ fn try_fire(host: &mut HostSim, player_id: &str) -> bool {
     true
 }
 
-fn spawn_asteroid(host: &mut HostSim) {
+fn spawn_asteroid(host: &mut HostSim, mods: &PhaseMods) {
     let id = host.next_asteroid_id;
     host.next_asteroid_id = host.next_asteroid_id.wrapping_add(1);
     let x = pseudo_rand(id) * PLAY_AREA_X * 2.0 - PLAY_AREA_X;
-    let roll = pseudo_rand(id.wrapping_mul(3));
-    let (kind, radius, points, speed, vx) = if roll > 0.88 {
-        (
-            AsteroidKind::Spinner,
+    let kind = pick_asteroid_kind(id, mods);
+    let (radius, points, mut speed, mut vx) = match kind {
+        AsteroidKind::Spinner => (
             14.0,
             40,
             150.0 + pseudo_rand(id.wrapping_mul(11)) * 40.0,
             0.0,
-        )
-    } else if roll > 0.72 {
-        let dir = if pseudo_rand(id.wrapping_mul(5)) > 0.5 {
-            1.0
-        } else {
-            -1.0
-        };
-        (
-            AsteroidKind::Zigzag,
-            13.0,
-            80,
-            120.0 + pseudo_rand(id.wrapping_mul(13)) * 35.0,
-            dir * (140.0 + pseudo_rand(id.wrapping_mul(17)) * 60.0),
-        )
-    } else if roll > 0.40 {
-        (
-            AsteroidKind::Small,
+        ),
+        AsteroidKind::Zigzag => {
+            let dir = if pseudo_rand(id.wrapping_mul(5)) > 0.5 {
+                1.0
+            } else {
+                -1.0
+            };
+            (
+                13.0,
+                80,
+                120.0 + pseudo_rand(id.wrapping_mul(13)) * 35.0,
+                dir * (140.0 + pseudo_rand(id.wrapping_mul(17)) * 60.0),
+            )
+        }
+        AsteroidKind::Small => (
             12.0,
             20,
             160.0 + pseudo_rand(id.wrapping_mul(7)) * 50.0,
             0.0,
-        )
-    } else {
-        (
-            AsteroidKind::Large,
+        ),
+        AsteroidKind::Large => (
             28.0,
             10,
             90.0 + pseudo_rand(id.wrapping_mul(7)) * 35.0,
             0.0,
-        )
+        ),
     };
+
+    let fast = match kind {
+        AsteroidKind::Large | AsteroidKind::Small => mods.large_small_fast,
+        AsteroidKind::Zigzag => mods.zigzag_fast,
+        AsteroidKind::Spinner => mods.spinner_fast,
+    };
+    if fast {
+        speed *= SPEED_FAST_MUL;
+        if kind == AsteroidKind::Zigzag {
+            vx *= ZIGZAG_VX_FAST_MUL;
+        }
+    }
+
     host.asteroids.push(SimAsteroid {
         id,
         kind,
@@ -775,6 +860,26 @@ fn spawn_asteroid(host: &mut HostSim) {
         radius,
         points,
     });
+}
+
+fn pick_asteroid_kind(id: u32, mods: &PhaseMods) -> AsteroidKind {
+    let total = mods.weight_large
+        + mods.weight_small
+        + mods.weight_zigzag
+        + mods.weight_spinner;
+    let mut roll = pseudo_rand(id.wrapping_mul(3)) * total;
+    if roll < mods.weight_large {
+        return AsteroidKind::Large;
+    }
+    roll -= mods.weight_large;
+    if roll < mods.weight_small {
+        return AsteroidKind::Small;
+    }
+    roll -= mods.weight_small;
+    if roll < mods.weight_zigzag {
+        return AsteroidKind::Zigzag;
+    }
+    AsteroidKind::Spinner
 }
 
 fn integrate_asteroid(asteroid: &mut SimAsteroid, dt: f32) {
@@ -1569,6 +1674,8 @@ pub fn sync_world_sprites(
     } else {
         "Competitive".to_string()
     };
+    let phase = phase_from_score(leading_score_state(&rendered_ships));
+    let mode = format!("Phase {phase}\n{mode}");
 
     let leave = if latest.match_over {
         match match_over_return.seconds_left() {
@@ -1653,7 +1760,7 @@ fn color_for_asteroid(kind: AsteroidKind) -> Color {
     match kind {
         AsteroidKind::Large => Color::srgb(0.55, 0.32, 0.18),
         AsteroidKind::Small => Color::srgb(0.95, 0.55, 0.18),
-        AsteroidKind::Spinner => Color::srgb(1.0, 0.88, 0.2),
+        AsteroidKind::Spinner => Color::srgb(0.95, 0.18, 0.16),
         AsteroidKind::Zigzag => Color::srgb(0.95, 0.82, 0.22),
     }
 }
