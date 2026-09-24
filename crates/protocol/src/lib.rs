@@ -15,13 +15,29 @@ pub enum GameDurationMinutes {
     Five = 5,
     Ten = 10,
     Fifteen = 15,
+    /// Solo-only: play until out of lives (no time limit).
+    Endless = 0,
 }
 
 impl GameDurationMinutes {
+    /// Timed matches (host / online rooms).
     pub const ALL: [Self; 3] = [Self::Five, Self::Ten, Self::Fifteen];
+    /// Solo setup options, including endless (first = default).
+    pub const SOLO: [Self; 4] = [Self::Endless, Self::Five, Self::Ten, Self::Fifteen];
 
     pub fn as_minutes(self) -> u8 {
         self as u8
+    }
+
+    pub fn is_endless(self) -> bool {
+        matches!(self, Self::Endless)
+    }
+
+    pub fn label(self) -> String {
+        match self {
+            Self::Endless => "Until out of lives".into(),
+            other => format!("{} min", other.as_minutes()),
+        }
     }
 }
 

@@ -55,6 +55,8 @@ pub struct HostSim {
     pub active: bool,
     pub tick: u32,
     pub time_left: f32,
+    pub elapsed: f32,
+    pub endless: bool,
     pub match_over: bool,
     pub ships: HashMap<String, SimShip>,
     pub bullets: Vec<SimBullet>,
@@ -213,6 +215,7 @@ pub fn spawn_playing_hud(
             node,
         ));
     }
+
 }
 
 pub fn cleanup_playing(
@@ -245,7 +248,13 @@ pub fn cleanup_playing(
 pub fn begin_host_sim(session: &Session, host: &mut HostSim, duration: GameDurationMinutes) {
     host.active = session.is_owner;
     host.tick = 0;
-    host.time_left = f32::from(duration.as_minutes()) * 60.0;
+    host.endless = duration.is_endless();
+    host.elapsed = 0.0;
+    host.time_left = if host.endless {
+        0.0
+    } else {
+        f32::from(duration.as_minutes()) * 60.0
+    };
     host.match_over = false;
     host.broadcast_accum = 0.0;
     host.spawn_accum = 0.0;
@@ -436,12 +445,15 @@ pub fn playing_host_simulate(
     }
     let dt = time.delta_secs();
     if !host.match_over {
-        host.time_left = (host.time_left - dt).max(0.0);
-        if host.time_left <= 0.0 {
-            host.match_over = true;
-            for ship in host.ships.values_mut() {
-                ship.move_x = 0;
-                ship.move_y = 0;
+        host.elapsed += dt;
+        if !host.endless {
+            host.time_left = (host.time_left - dt).max(0.0);
+            if host.time_left <= 0.0 {
+                host.match_over = true;
+                for ship in host.ships.values_mut() {
+                    ship.move_x = 0;
+                    ship.move_y = 0;
+                }
             }
         }
     }
@@ -498,13 +510,19 @@ pub fn playing_host_simulate(
         host.asteroids.retain(|a| a.y > HORIZON_Y - a.radius);
 
         host.spawn_accum += dt;
-        let total = session
-            .room
-            .as_ref()
-            .map(|r| f32::from(r.duration_minutes.as_minutes()) * 60.0)
-            .unwrap_or(300.0)
-            .max(1.0);
-        let elapsed_factor = 1.0 - (host.time_left / total).clamp(0.0, 1.0);
+        let (total, remaining) = if host.endless {
+            // Ramp difficulty over ~10 minutes of survival.
+            (600.0_f32, (600.0 - host.elapsed).max(0.0))
+        } else {
+            let total = session
+                .room
+                .as_ref()
+                .map(|r| f32::from(r.duration_minutes.as_minutes()) * 60.0)
+                .unwrap_or(300.0)
+                .max(1.0);
+            (total, host.time_left)
+        };
+        let elapsed_factor = 1.0 - (remaining / total).clamp(0.0, 1.0);
         let interval = (ASTEROID_SPAWN_BASE - elapsed_factor * 0.55).clamp(0.4, 1.2);
         if host.spawn_accum >= interval {
             host.spawn_accum = 0.0;
@@ -810,9 +828,14 @@ pub fn snapshot(host: &HostSim) -> GameMessage {
 }
 
 fn build_snapshot(host: &HostSim) -> GameMessage {
+    let time_left_secs = if host.endless {
+        host.elapsed.floor() as u32
+    } else {
+        host.time_left.ceil() as u32
+    };
     GameMessage::State {
         tick: host.tick,
-        time_left_secs: host.time_left.ceil() as u32,
+        time_left_secs,
         match_over: host.match_over,
         ships: host
             .ships
@@ -1333,7 +1356,16 @@ pub fn sync_world_sprites(
         .join("\n");
     let minutes = latest.time_left_secs / 60;
     let seconds = latest.time_left_secs % 60;
-    let title = format!("AstroWar\n{minutes:02}:{seconds:02}");
+    let endless = session
+        .room
+        .as_ref()
+        .map(|r| r.duration_minutes.is_endless())
+        .unwrap_or(false);
+    let title = if endless {
+        format!("AstroWar\n{minutes:02}:{seconds:02} elapsed")
+    } else {
+        format!("AstroWar\n{minutes:02}:{seconds:02}")
+    };
     let mode = if latest.match_over {
         let winner = scores
             .iter()
@@ -1342,7 +1374,11 @@ pub fn sync_world_sprites(
             .unwrap_or("nobody");
         format!("MATCH OVER\nleader: {winner}")
     } else if session.solo {
-        "Solo".to_string()
+        if endless {
+            "Solo · until out".to_string()
+        } else {
+            "Solo".to_string()
+        }
     } else {
         "Competitive".to_string()
     };

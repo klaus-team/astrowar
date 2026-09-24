@@ -132,6 +132,10 @@ impl HostForm {
     fn duration(&self) -> GameDurationMinutes {
         GameDurationMinutes::ALL[self.duration_index % GameDurationMinutes::ALL.len()]
     }
+
+    fn solo_duration(&self) -> GameDurationMinutes {
+        GameDurationMinutes::SOLO[self.duration_index % GameDurationMinutes::SOLO.len()]
+    }
 }
 
 #[derive(Resource)]
@@ -310,9 +314,9 @@ fn solo_setup_body(form: &HostForm, status: &StatusMessage) -> String {
         format!("\nStatus: {}\n", status.text)
     };
     format!(
-        "Offline — no server needed{status_line}\n{nick_mark} Nickname: {}\n{dur_mark} Duration: {} min\n\n[Tab] Switch field\n[Left/Right] Change duration\n[Enter] Start\n[Esc] Back",
+        "Offline — no server needed{status_line}\n{nick_mark} Nickname: {}\n{dur_mark} Duration: {}\n\n[Tab] Switch field\n[Left/Right] Change duration\n[Enter] Start\n[Esc] Back",
         form.nickname,
-        form.duration().as_minutes(),
+        form.solo_duration().label(),
     )
 }
 
@@ -329,10 +333,10 @@ fn host_setup_body(
         format!("\nStatus: {}\n", status.text)
     };
     format!(
-        "Server: {}{status_line}\n{nick_mark} Nickname: {}\n{dur_mark} Duration: {} min\n\n[Tab] Switch field\n[Left/Right] Change duration\n[Enter] Create room\n[Esc] Back",
+        "Server: {}{status_line}\n{nick_mark} Nickname: {}\n{dur_mark} Duration: {}\n\n[Tab] Switch field\n[Left/Right] Change duration\n[Enter] Create room\n[Esc] Back",
         settings.server_url,
         form.nickname,
-        form.duration().as_minutes(),
+        form.duration().label(),
     )
 }
 
@@ -382,10 +386,10 @@ fn lobby_body(session: &Session, status: &StatusMessage) -> String {
         format!("Status: {}\n\n", status.text)
     };
     format!(
-        "{status_line}Code: {}\nPhase: {:?}\nDuration: {} min\nPlayers ({}/{}):\n{}\n\n{owner_help}[Esc] Leave",
+        "{status_line}Code: {}\nPhase: {:?}\nDuration: {}\nPlayers ({}/{}):\n{}\n\n{owner_help}[Esc] Leave",
         room.code,
         room.phase,
-        room.duration_minutes.as_minutes(),
+        room.duration_minutes.label(),
         room.players.len(),
         room.max_players,
         players,
@@ -472,6 +476,7 @@ fn handle_main_menu_input(
         status.text.clear();
         *intent = ConnectIntent::Host;
         host_form.nickname = settings.nickname.clone();
+        host_form.duration_index %= GameDurationMinutes::ALL.len();
         host_form.focus_nickname = true;
         next_state.set(AppState::HostSetup);
     }
@@ -509,11 +514,11 @@ fn handle_solo_setup_input(
     }
     if !form.focus_nickname {
         if keys.just_pressed(KeyCode::ArrowLeft) {
-            let len = GameDurationMinutes::ALL.len();
+            let len = GameDurationMinutes::SOLO.len();
             form.duration_index = (form.duration_index + len - 1) % len;
         }
         if keys.just_pressed(KeyCode::ArrowRight) {
-            form.duration_index = (form.duration_index + 1) % GameDurationMinutes::ALL.len();
+            form.duration_index = (form.duration_index + 1) % GameDurationMinutes::SOLO.len();
         }
     }
     for event in key_events.read() {
@@ -535,7 +540,7 @@ fn handle_solo_setup_input(
             &mut latest,
             &mut prediction,
             nickname,
-            form.duration(),
+            form.solo_duration(),
         );
         next_state.set(AppState::Playing);
     }

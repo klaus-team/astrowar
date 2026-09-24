@@ -22,6 +22,8 @@ pub enum RoomError {
     AlreadyInRoom,
     #[error("player not in room")]
     NotInRoom,
+    #[error("invalid match duration")]
+    InvalidDuration,
 }
 
 #[derive(Debug)]
@@ -139,6 +141,9 @@ impl RoomStore {
         duration_minutes: GameDurationMinutes,
     ) -> Result<RoomInfo, RoomError> {
         self.purge_expired();
+        if duration_minutes.is_endless() {
+            return Err(RoomError::InvalidDuration);
+        }
         if self.player_to_room.contains_key(&owner_id) {
             return Err(RoomError::AlreadyInRoom);
         }
