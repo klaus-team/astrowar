@@ -242,3 +242,61 @@ impl RoomStore {
             .unwrap_or(false)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_nickname_rejects_empty() {
+        assert!(matches!(
+            validate_nickname(""),
+            Err(RoomError::EmptyNickname)
+        ));
+        assert!(matches!(
+            validate_nickname("   "),
+            Err(RoomError::EmptyNickname)
+        ));
+    }
+
+    #[test]
+    fn validate_nickname_accepts_trimmed() {
+        assert_eq!(validate_nickname("  Ace  ").unwrap(), "Ace");
+    }
+
+    #[test]
+    fn next_auto_nickname_skips_taken_player() {
+        let players = vec![PlayerInfo {
+            id: "a".into(),
+            nickname: "Player".into(),
+        }];
+        assert_eq!(next_auto_nickname(&players), "Player2");
+    }
+
+    #[test]
+    fn join_rejects_full_room_and_taken_nickname() {
+        let mut store = RoomStore::new(4, 3600);
+        let room = store
+            .create(
+                "owner".into(),
+                "Host".into(),
+                GameMode::Competitive,
+                GameDurationMinutes::Five,
+            )
+            .unwrap();
+        let code = room.code.clone();
+
+        for i in 1..MAX_PLAYERS {
+            store
+                .join(code.clone(), format!("p{i}"), format!("Nick{i}"))
+                .unwrap();
+        }
+        let full = store.join(code.clone(), "overflow".into(), "Extra".into());
+        assert!(matches!(full, Err(RoomError::Full)));
+
+        // Leave one slot, then collide on nickname.
+        store.leave(&code, "p1").unwrap();
+        let taken = store.join(code, "new".into(), "Host".into());
+        assert!(matches!(taken, Err(RoomError::NicknameTaken)));
+    }
+}

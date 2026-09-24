@@ -47,7 +47,7 @@ Input / Hit (GameMessage) ──►  broadcast Relayed      ───►  apply 
 
 | Concern | Who decides |
 | ------- | ----------- |
-| Spawns, asteroid motion, scoring, lives, match over | **Host** (`HostSim` in `playing.rs`) |
+| Spawns, asteroid motion, scoring, lives, match over | **Host** (`HostSim` in `playing/`) |
 | Local ship pose / fire feel | **Local client** prediction (`LocalPrediction`) |
 | Authoritative ship score/lives shown | Host `State` snapshots |
 | Solo | Local process is host; no WebSocket |
@@ -68,8 +68,14 @@ Solo skips the relay and enters `Playing` with a local `HostSim`.
 
 | Module | Responsibility |
 | ------ | ---------------- |
-| `main.rs` | App wiring, menus, `poll_net_events`, session |
-| `playing.rs` | Host sim, prediction, collisions, phases, HUD sync, sprites |
+| `main.rs` | App wiring, `Session`, `poll_net_events`, playing input / solo start |
+| `ui.rs` | Menu spawn/refresh/handlers, text edit, `UiRoot` |
+| `playing/mod.rs` | Re-exports + shared send helpers for the play loop |
+| `playing/phase.rs` | Score phases, spawn weights, `spawn_asteroid` |
+| `playing/host.rs` | `HostSim`, host simulate, collisions, forfeit/begin |
+| `playing/prediction.rs` | Local prediction, input send, client local hits |
+| `playing/sync.rs` | Authoritative state apply, interpolation, snapshots |
+| `playing/world.rs` | Sprites/HUD sync, hurt flash, high-score hooks |
 | `game_sync.rs` | `GameMessage` + entity state DTOs |
 | `net_bridge.rs` | Background Tokio thread ↔ Bevy events/commands |
 | `board.rs` | Fixed 960×720 logical board + letterbox camera |

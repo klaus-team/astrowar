@@ -53,12 +53,12 @@ Gameplay payloads belong in `crates/game/src/game_sync.rs` and travel inside `Re
 | Do | Avoid |
 | -- | ----- |
 | Menu / session flow in `main.rs` systems gated by `AppState` | Spawning asteroids or scoring from menu handlers |
-| Simulation, prediction, phases, sprite sync in `playing.rs` | Duplicating host rules on non-owner clients as authority |
+| Simulation, prediction, phases, sprite sync in `playing/` | Duplicating host rules on non-owner clients as authority |
 | Fire SFX via `SfxTrigger` / `emit_sfx` and respect `AudioMuted` | Spawning audio when muted |
 | Keep board coordinates in `board` logical space | Assuming window pixels == play area |
 | Persist nick/scores through `storage` / `nickname` / `highscores` | Writing under arbitrary paths outside the OS data dir helpers |
 
-Sideways-only ship motion and score-phase difficulty live in `playing.rs`; change them there, not in UI text alone.
+Sideways-only ship motion and score-phase difficulty live in `playing/`; change them there, not in UI text alone.
 
 ---
 

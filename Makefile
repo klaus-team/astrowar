@@ -37,7 +37,7 @@ help:
 		'    make fix-perms      Fix target/.cargo-cache ownership after root Docker runs' \
 		'    make health         GET /health' \
 		'    make check          cargo check (Docker)' \
-		'    make test           cargo test protocol/server/net (Docker)'
+		'    make test           cargo test protocol/server/net/astrowar (Docker)'
 
 env:
 	@test -f .env || cp .env.example .env
@@ -150,4 +150,4 @@ check:
 
 test:
 	@chmod +x scripts/docker-run.sh
-	./scripts/docker-run.sh toolchain -- cargo test -p protocol -p astrowar-server -p net
+	./scripts/docker-run.sh toolchain -- cargo test -p protocol -p astrowar-server -p net -p astrowar
