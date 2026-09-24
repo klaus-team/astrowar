@@ -4,6 +4,7 @@ mod highscores;
 mod net_bridge;
 mod nickname;
 mod playing;
+mod shapes;
 mod storage;
 
 use bevy::input::keyboard::{Key, KeyboardInput};
@@ -13,6 +14,7 @@ use game_sync::GameMessage;
 use highscores::HighScores;
 use net_bridge::{NetBridge, NetCommand, NetEvent};
 use nickname::{load_last_nickname, resolve_or_default, save_last_nickname};
+use shapes::setup_shape_meshes;
 use playing::{
     advance_interpolation, begin_host_sim, cleanup_playing, handle_relayed_game_message,
     mark_player_forfeit, maybe_record_high_score, playing_client_local_hits,
@@ -50,7 +52,7 @@ fn main() {
             ..default()
         }))
         .init_state::<AppState>()
-        .add_systems(Startup, (setup_board_camera, setup_net_bridge))
+        .add_systems(Startup, (setup_board_camera, setup_net_bridge, setup_shape_meshes))
         .add_systems(OnEnter(AppState::MainMenu), spawn_main_menu)
         .add_systems(OnEnter(AppState::SoloSetup), spawn_solo_setup)
         .add_systems(OnEnter(AppState::HostSetup), spawn_host_setup)

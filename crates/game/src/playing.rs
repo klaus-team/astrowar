@@ -2,8 +2,10 @@ use crate::board::PLAY_AREA_X;
 use crate::game_sync::{AsteroidKind, AsteroidState, BulletState, GameMessage, ShipState};
 use crate::highscores::HighScores;
 use crate::net_bridge::{NetBridge, NetCommand};
+use crate::shapes::ShapeMeshes;
 use crate::Session;
 use bevy::prelude::*;
+use bevy::sprite::{ColorMaterial, MeshMaterial2d};
 use protocol::{GameDurationMinutes, RoomInfo};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -44,6 +46,8 @@ pub struct LocalBulletSprite {
 #[derive(Component)]
 pub struct AsteroidSprite {
     pub id: u32,
+    #[allow(dead_code)]
+    pub kind: AsteroidKind,
 }
 
 #[derive(Component)]
@@ -1186,14 +1190,19 @@ pub fn sync_world_sprites(
     mut commands: Commands,
     latest: Res<LatestState>,
     prediction: Res<LocalPrediction>,
-    mut ships: Query<
-        (Entity, &ShipSprite, &mut Transform, &mut Sprite),
-        (
-            Without<BulletSprite>,
-            Without<LocalBulletSprite>,
-            Without<AsteroidSprite>,
-        ),
-    >,
+    shapes: Res<ShapeMeshes>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    time: Res<Time>,
+    mut ships: Query<(
+        Entity,
+        &ShipSprite,
+        &mut Transform,
+        &MeshMaterial2d<ColorMaterial>,
+    ), (
+        Without<BulletSprite>,
+        Without<LocalBulletSprite>,
+        Without<AsteroidSprite>,
+    )>,
     mut bullets: Query<
         (Entity, &BulletSprite, &mut Transform),
         (
@@ -1210,14 +1219,16 @@ pub fn sync_world_sprites(
             Without<AsteroidSprite>,
         ),
     >,
-    mut asteroids: Query<
-        (Entity, &AsteroidSprite, &mut Transform, &mut Sprite),
-        (
-            Without<ShipSprite>,
-            Without<BulletSprite>,
-            Without<LocalBulletSprite>,
-        ),
-    >,
+    mut asteroids: Query<(
+        Entity,
+        &AsteroidSprite,
+        &mut Transform,
+        &MeshMaterial2d<ColorMaterial>,
+    ), (
+        Without<ShipSprite>,
+        Without<BulletSprite>,
+        Without<LocalBulletSprite>,
+    )>,
     mut hud: Query<(&HudSlot, &mut Text), With<PlayingHud>>,
     session: Res<Session>,
 ) {
@@ -1251,23 +1262,23 @@ pub fn sync_world_sprites(
         if !ship.alive || ship.forfeited {
             color = Color::srgba(0.35, 0.35, 0.4, 0.45);
         }
-        if let Some((_, _, mut transform, mut sprite)) = ships
+        if let Some((_, _, mut transform, material)) = ships
             .iter_mut()
             .find(|(_, marker, _, _)| marker.player_id == ship.player_id)
         {
             transform.translation.x = ship.x;
             transform.translation.y = ship.y;
-            sprite.color = color;
+            if let Some(mat) = materials.get_mut(&material.0) {
+                mat.color = color;
+            }
         } else {
+            let material = materials.add(ColorMaterial::from_color(color));
             commands.spawn((
                 ShipSprite {
                     player_id: ship.player_id.clone(),
                 },
-                Sprite {
-                    color,
-                    custom_size: Some(Vec2::new(26.0, 30.0)),
-                    ..default()
-                },
+                Mesh2d(shapes.ship.clone()),
+                MeshMaterial2d(material),
                 Transform::from_xyz(ship.x, ship.y, 2.0),
             ));
         }
@@ -1342,25 +1353,35 @@ pub fn sync_world_sprites(
     let mut seen_asteroids = Vec::new();
     for asteroid in &latest.asteroids {
         seen_asteroids.push(asteroid.id);
-        let size = Vec2::splat(asteroid.radius * 2.0);
         let color = color_for_asteroid(asteroid.kind);
-        if let Some((_, _, mut transform, mut sprite)) = asteroids
+        let spin = if asteroid.kind == AsteroidKind::Spinner {
+            Quat::from_rotation_z(time.elapsed_secs() * 2.4 + asteroid.id as f32 * 0.7)
+        } else {
+            Quat::IDENTITY
+        };
+        if let Some((_, _, mut transform, material)) = asteroids
             .iter_mut()
             .find(|(_, marker, _, _)| marker.id == asteroid.id)
         {
             transform.translation.x = asteroid.x;
             transform.translation.y = asteroid.y;
-            sprite.custom_size = Some(size);
-            sprite.color = color;
+            transform.rotation = spin;
+            transform.scale = Vec3::splat(asteroid.radius);
+            if let Some(mat) = materials.get_mut(&material.0) {
+                mat.color = color;
+            }
         } else {
+            let material = materials.add(ColorMaterial::from_color(color));
             commands.spawn((
-                AsteroidSprite { id: asteroid.id },
-                Sprite {
-                    color,
-                    custom_size: Some(size),
-                    ..default()
+                AsteroidSprite {
+                    id: asteroid.id,
+                    kind: asteroid.kind,
                 },
-                Transform::from_xyz(asteroid.x, asteroid.y, 1.0),
+                Mesh2d(shapes.for_asteroid(asteroid.kind)),
+                MeshMaterial2d(material),
+                Transform::from_xyz(asteroid.x, asteroid.y, 1.0)
+                    .with_rotation(spin)
+                    .with_scale(Vec3::splat(asteroid.radius)),
             ));
         }
     }
@@ -1490,9 +1511,9 @@ fn color_for_id(player_id: &str) -> Color {
 
 fn color_for_asteroid(kind: AsteroidKind) -> Color {
     match kind {
-        AsteroidKind::Large => Color::srgb(0.55, 0.5, 0.48),
-        AsteroidKind::Small => Color::srgb(0.7, 0.62, 0.55),
-        AsteroidKind::Spinner => Color::srgb(0.95, 0.92, 0.85),
-        AsteroidKind::Zigzag => Color::srgb(0.35, 0.75, 0.95),
+        AsteroidKind::Large => Color::srgb(0.55, 0.32, 0.18),
+        AsteroidKind::Small => Color::srgb(0.95, 0.55, 0.18),
+        AsteroidKind::Spinner => Color::srgb(1.0, 0.88, 0.2),
+        AsteroidKind::Zigzag => Color::srgb(0.95, 0.82, 0.22),
     }
 }
