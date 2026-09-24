@@ -119,7 +119,7 @@ async fn net_loop(mut cmd_rx: UnboundedReceiver<NetCommand>, event_tx: Unbounded
                                 let _ = event_tx.send(NetEvent::RoomUpdated(room));
                             }
                             Err(err) => {
-                                let _ = event_tx.send(NetEvent::Error(err.to_string()));
+                                let _ = event_tx.send(NetEvent::Error(connect_error_message(&err)));
                             }
                         }
                     }
@@ -133,7 +133,7 @@ async fn net_loop(mut cmd_rx: UnboundedReceiver<NetCommand>, event_tx: Unbounded
                                 let _ = event_tx.send(NetEvent::RoomUpdated(room));
                             }
                             Err(err) => {
-                                let _ = event_tx.send(NetEvent::Error(err.to_string()));
+                                let _ = event_tx.send(NetEvent::Error(connect_error_message(&err)));
                             }
                         }
                     }
@@ -184,6 +184,14 @@ async fn recv_optional(client: &mut Option<Client>) -> Result<ServerMessage, Net
         .expect("client checked by select")
         .recv()
         .await
+}
+
+fn connect_error_message(err: &NetError) -> String {
+    match err {
+        // Keep server-side join/create reasons (room full, nickname taken, …).
+        NetError::Protocol(message) => message.clone(),
+        _ => "connection failed, try again".into(),
+    }
 }
 
 async fn connect_and_create(

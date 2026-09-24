@@ -395,10 +395,10 @@ fn host_setup_body(
     let status_line = if status.text.is_empty() {
         String::new()
     } else {
-        format!("\nStatus: {}\n", status.text)
+        format!("\nStatus: {}", status.text)
     };
     format!(
-        "Server: {}{status_line}\n{nick_mark} Nickname: {}\n{dur_mark} Duration: {}\n\n[Tab] Switch field\n[Left/Right] Change duration\n[Enter] Create room\n[Esc] Back",
+        "Server: {}{status_line}\n\n{nick_mark} Nickname: {}\n{dur_mark} Duration: {}\n\n[Tab] Switch field\n[Left/Right] Change duration\n[Enter] Create room\n[Esc] Back",
         server_host_label(&settings.server_url),
         form.nickname,
         form.duration().label(),
@@ -415,10 +415,10 @@ fn join_setup_body(
     let status_line = if status.text.is_empty() {
         String::new()
     } else {
-        format!("\nStatus: {}\n", status.text)
+        format!("\nStatus: {}", status.text)
     };
     format!(
-        "Server: {}{status_line}\n{nick_mark} Nickname: {}\n{code_mark} Room code: {}\n\nNicknames must be unique in the room.\n[Tab] Switch field\n[Enter] Join room\n[Esc] Back",
+        "Server: {}{status_line}\n\n{nick_mark} Nickname: {}\n{code_mark} Room code: {}\n\nNicknames must be unique in the room.\n[Tab] Switch field\n[Enter] Join room\n[Esc] Back",
         server_host_label(&settings.server_url),
         form.nickname,
         form.code,
