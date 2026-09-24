@@ -1,6 +1,6 @@
 //! Procedural SFX bank (WAV in memory — no asset files required).
 
-use bevy::audio::{AudioPlayer, AudioSource, PlaybackSettings, Volume};
+use bevy::audio::{AudioPlayer, AudioSource, GlobalVolume, PlaybackSettings, Volume};
 use bevy::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,6 +36,9 @@ impl Default for SpinnerAlert {
     }
 }
 
+#[derive(Resource, Default)]
+pub struct AudioMuted(pub bool);
+
 pub fn setup_sounds(mut commands: Commands, mut audio: ResMut<Assets<AudioSource>>) {
     commands.insert_resource(SoundBank {
         shot: audio.add(make_shot()),
@@ -44,13 +47,52 @@ pub fn setup_sounds(mut commands: Commands, mut audio: ResMut<Assets<AudioSource
         shock: audio.add(make_shock()),
     });
     commands.init_resource::<SpinnerAlert>();
+    commands.init_resource::<AudioMuted>();
+}
+
+/// Toggle mute for every sound in the game (`M`), including menu confirms.
+pub fn toggle_mute_audio(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut muted: ResMut<AudioMuted>,
+    mut global_volume: ResMut<GlobalVolume>,
+    playing: Query<Entity, With<AudioPlayer>>,
+    mut commands: Commands,
+) {
+    if !keys.just_pressed(KeyCode::KeyM) {
+        return;
+    }
+    muted.0 = !muted.0;
+    *global_volume = if muted.0 {
+        GlobalVolume {
+            volume: Volume::ZERO,
+        }
+    } else {
+        GlobalVolume::new(1.0)
+    };
+    if muted.0 {
+        for entity in &playing {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+/// Emit a oneshot SFX unless the game is muted.
+pub fn emit_sfx(sfx: &mut EventWriter<SfxTrigger>, muted: &AudioMuted, trigger: SfxTrigger) {
+    if !muted.0 {
+        sfx.send(trigger);
+    }
 }
 
 pub fn play_sfx_triggers(
     mut commands: Commands,
     mut events: EventReader<SfxTrigger>,
     bank: Res<SoundBank>,
+    muted: Res<AudioMuted>,
 ) {
+    if muted.0 {
+        for _ in events.read() {}
+        return;
+    }
     for trigger in events.read() {
         match trigger {
             SfxTrigger::Shot => {
@@ -70,6 +112,7 @@ pub fn sync_spinner_hum(
     bank: Res<SoundBank>,
     latest: Res<crate::playing::LatestState>,
     time: Res<Time>,
+    muted: Res<AudioMuted>,
     mut alert: ResMut<SpinnerAlert>,
 ) {
     let wants = latest
@@ -80,6 +123,10 @@ pub fn sync_spinner_hum(
     if !wants {
         alert.active = false;
         alert.timer.reset();
+        return;
+    }
+
+    if muted.0 {
         return;
     }
 

@@ -16,7 +16,10 @@ use highscores::HighScores;
 use net_bridge::{NetBridge, NetCommand, NetEvent};
 use nickname::{load_last_nickname, resolve_or_default, save_last_nickname};
 use shapes::setup_shape_meshes;
-use sounds::{play_sfx_triggers, setup_sounds, sync_spinner_hum, SfxTrigger};
+use sounds::{
+    emit_sfx, play_sfx_triggers, setup_sounds, sync_spinner_hum, toggle_mute_audio, AudioMuted,
+    SfxTrigger,
+};
 use playing::{
     advance_interpolation, begin_host_sim, cleanup_playing, handle_relayed_game_message,
     mark_player_forfeit, maybe_record_high_score, playing_client_local_hits,
@@ -48,6 +51,7 @@ fn main() {
         .insert_resource(HighScores::default())
         .insert_resource(MatchOverReturn::default())
         .insert_resource(HurtFlash::default())
+        .insert_resource(AudioMuted::default())
         .add_event::<SfxTrigger>()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -80,6 +84,7 @@ fn main() {
             Update,
             (
                 update_board_viewport,
+                toggle_mute_audio,
                 handle_main_menu_input.run_if(in_state(AppState::MainMenu)),
                 handle_solo_setup_input.run_if(in_state(AppState::SoloSetup)),
                 handle_host_setup_input.run_if(in_state(AppState::HostSetup)),
@@ -92,6 +97,7 @@ fn main() {
                 refresh_host_setup_ui.run_if(in_state(AppState::HostSetup)),
                 refresh_join_setup_ui.run_if(in_state(AppState::JoinSetup)),
                 refresh_lobby_ui.run_if(in_state(AppState::Lobby)),
+                refresh_main_menu_ui.run_if(in_state(AppState::MainMenu)),
                 poll_net_events,
                 playing_predict_local.run_if(in_state(AppState::Playing)),
                 playing_send_input.run_if(in_state(AppState::Playing)),
@@ -282,20 +288,27 @@ fn spawn_main_menu(
     mut commands: Commands,
     status: Res<StatusMessage>,
     high_scores: Res<HighScores>,
+    muted: Res<AudioMuted>,
 ) {
+    spawn_screen(
+        &mut commands,
+        "ASTROWAR",
+        main_menu_body(&status, &high_scores, &muted),
+    );
+}
+
+fn main_menu_body(status: &StatusMessage, high_scores: &HighScores, muted: &AudioMuted) -> String {
     let status_line = if status.text.is_empty() {
         String::new()
     } else {
         format!("\nLast status: {}\n", status.text)
     };
     let scores = high_scores.menu_block();
-    spawn_screen(
-        &mut commands,
-        "ASTROWAR",
-        format!(
-            "{status_line}[1] Solo (offline)\n[2] Host internet room\n[3] Join with code\n[Esc] Quit{scores}"
-        ),
-    );
+    // [on] = sound audible, [off] = muted
+    let mute_toggle = if muted.0 { "[off]" } else { "[on]" };
+    format!(
+        "{status_line}[1] Solo (offline)\n[2] Host internet room\n[3] Join with code\n\n[M] Mute {mute_toggle}\n[Esc] Quit{scores}"
+    )
 }
 
 fn spawn_solo_setup(
@@ -462,6 +475,18 @@ fn set_dynamic_text(query: &mut Query<&mut Text, With<DynamicText>>, body: Strin
     }
 }
 
+fn refresh_main_menu_ui(
+    muted: Res<AudioMuted>,
+    status: Res<StatusMessage>,
+    high_scores: Res<HighScores>,
+    mut query: Query<&mut Text, With<DynamicText>>,
+) {
+    if !(muted.is_changed() || status.is_changed() || high_scores.is_changed()) {
+        return;
+    }
+    set_dynamic_text(&mut query, main_menu_body(&status, &high_scores, &muted));
+}
+
 fn refresh_solo_setup_ui(
     form: Res<HostForm>,
     status: Res<StatusMessage>,
@@ -517,6 +542,7 @@ fn handle_main_menu_input(
     mut join_form: ResMut<JoinForm>,
     mut intent: ResMut<ConnectIntent>,
     settings: Res<ClientSettings>,
+    muted: Res<AudioMuted>,
     mut sfx: EventWriter<SfxTrigger>,
 ) {
     if keys.just_pressed(KeyCode::Digit1) {
@@ -525,7 +551,7 @@ fn handle_main_menu_input(
         // Prefill only when a saved nick exists; otherwise keep blank.
         host_form.nickname = settings.nickname.clone();
         host_form.focus_nickname = true;
-        sfx.send(SfxTrigger::Shot);
+        emit_sfx(&mut sfx, &muted, SfxTrigger::Shot);
         next_state.set(AppState::SoloSetup);
     }
     if keys.just_pressed(KeyCode::Digit2) {
@@ -534,7 +560,7 @@ fn handle_main_menu_input(
         host_form.nickname = settings.nickname.clone();
         host_form.duration_index %= GameDurationMinutes::ALL.len();
         host_form.focus_nickname = true;
-        sfx.send(SfxTrigger::Shot);
+        emit_sfx(&mut sfx, &muted, SfxTrigger::Shot);
         next_state.set(AppState::HostSetup);
     }
     if keys.just_pressed(KeyCode::Digit3) {
@@ -543,7 +569,7 @@ fn handle_main_menu_input(
         join_form.nickname = settings.nickname.clone();
         join_form.code.clear();
         join_form.focus_nickname = true;
-        sfx.send(SfxTrigger::Shot);
+        emit_sfx(&mut sfx, &muted, SfxTrigger::Shot);
         next_state.set(AppState::JoinSetup);
     }
     if keys.just_pressed(KeyCode::Escape) {
@@ -562,6 +588,7 @@ fn handle_solo_setup_input(
     mut latest: ResMut<LatestState>,
     mut prediction: ResMut<LocalPrediction>,
     mut next_state: ResMut<NextState<AppState>>,
+    muted: Res<AudioMuted>,
     mut sfx: EventWriter<SfxTrigger>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
@@ -593,7 +620,7 @@ fn handle_solo_setup_input(
         settings.nickname = nickname.clone();
         save_last_nickname(&nickname);
         status.text.clear();
-        sfx.send(SfxTrigger::Shot);
+        emit_sfx(&mut sfx, &muted, SfxTrigger::Shot);
         start_solo_match(
             &mut session,
             &mut host,
@@ -616,6 +643,7 @@ fn handle_host_setup_input(
     mut intent: ResMut<ConnectIntent>,
     mut next_state: ResMut<NextState<AppState>>,
     bridge: Res<NetBridge>,
+    muted: Res<AudioMuted>,
     mut sfx: EventWriter<SfxTrigger>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
@@ -650,7 +678,7 @@ fn handle_host_setup_input(
         session.accept_connection = true;
         *intent = ConnectIntent::Host;
         status.text = "Creating room...".into();
-        sfx.send(SfxTrigger::Shot);
+        emit_sfx(&mut sfx, &muted, SfxTrigger::Shot);
         bridge.send(NetCommand::ConnectAndCreate {
             url: settings.server_url.clone(),
             nickname,
@@ -670,6 +698,7 @@ fn handle_join_setup_input(
     mut intent: ResMut<ConnectIntent>,
     mut next_state: ResMut<NextState<AppState>>,
     bridge: Res<NetBridge>,
+    muted: Res<AudioMuted>,
     mut sfx: EventWriter<SfxTrigger>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
@@ -705,7 +734,7 @@ fn handle_join_setup_input(
         session.accept_connection = true;
         *intent = ConnectIntent::Join;
         status.text = format!("Joining {code}...");
-        sfx.send(SfxTrigger::Shot);
+        emit_sfx(&mut sfx, &muted, SfxTrigger::Shot);
         bridge.send(NetCommand::ConnectAndJoin {
             url: settings.server_url.clone(),
             nickname,
@@ -740,6 +769,7 @@ fn handle_lobby_input(
     mut status: ResMut<StatusMessage>,
     mut next_state: ResMut<NextState<AppState>>,
     bridge: Res<NetBridge>,
+    muted: Res<AudioMuted>,
     mut sfx: EventWriter<SfxTrigger>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
@@ -755,7 +785,7 @@ fn handle_lobby_input(
     }
     if keys.just_pressed(KeyCode::Enter) && session.is_owner {
         status.text = "Starting match...".into();
-        sfx.send(SfxTrigger::Shot);
+        emit_sfx(&mut sfx, &muted, SfxTrigger::Shot);
         bridge.send(NetCommand::StartGame);
     }
 }

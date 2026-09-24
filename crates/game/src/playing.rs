@@ -3,7 +3,7 @@ use crate::game_sync::{AsteroidKind, AsteroidState, BulletState, GameMessage, Sh
 use crate::highscores::HighScores;
 use crate::net_bridge::{NetBridge, NetCommand};
 use crate::shapes::ShapeMeshes;
-use crate::sounds::{SfxTrigger, SoundBank};
+use crate::sounds::{SfxTrigger, SoundBank, AudioMuted};
 use bevy::audio::{AudioPlayer, PlaybackSettings, Volume};
 use crate::Session;
 use bevy::prelude::*;
@@ -235,6 +235,7 @@ pub fn watch_hurt_flash(
     session: Res<Session>,
     latest: Res<LatestState>,
     bank: Res<SoundBank>,
+    muted: Res<AudioMuted>,
     mut hurt: ResMut<HurtFlash>,
 ) {
     if hurt.remaining > 0.0 {
@@ -257,10 +258,12 @@ pub fn watch_hurt_flash(
         Some(prev) if ship.lives < prev => {
             hurt.trigger();
             // Play immediately here — don't rely on SfxTrigger event ordering.
-            commands.spawn((
-                AudioPlayer::new(bank.shock.clone()),
-                PlaybackSettings::DESPAWN.with_volume(Volume::new(0.9)),
-            ));
+            if !muted.0 {
+                commands.spawn((
+                    AudioPlayer::new(bank.shock.clone()),
+                    PlaybackSettings::DESPAWN.with_volume(Volume::new(0.9)),
+                ));
+            }
         }
         _ => {}
     }
