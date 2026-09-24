@@ -54,6 +54,16 @@ Update this file only when a decision that affects how we build changes.
 - Room owner may **start at any time**, including alone
 - Players may **join after the match has started** and play immediately
 - Leaving or disconnecting during a match is a **loss** for that player
+- Gameplay is **host-authoritative** over the relay (clients predict locally;
+  the reference server does not simulate asteroids or scores)
+
+## Solo and controls
+
+- **Solo offline** play is supported without contacting the relay
+- Solo may use **endless** duration (until out of lives) in addition to timed matches
+- The shooter moves **sideways only** (no vertical ship motion)
+- Difficulty **phases** advance from the leading score every **500** points;
+  effective spawn/speed modifiers clamp at phase **6** (HUD may show higher)
 
 ## Networking
 
@@ -69,3 +79,5 @@ Update this file only when a decision that affects how we build changes.
 - PRs should fit the reference server and official client described above
 - Forks may diverge freely under MIT
 - The project Code of Conduct applies to public project spaces
+- Coding and review expectations: [docs/CODE_GUIDE.md](docs/CODE_GUIDE.md),
+  [docs/CODE_REVIEW_GUIDE.md](docs/CODE_REVIEW_GUIDE.md); map: [docs/INDEX.md](docs/INDEX.md)

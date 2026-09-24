@@ -62,7 +62,12 @@ make start-client  # run native host binary
 
 ## Documentation
 
+- [docs/INDEX.md](docs/INDEX.md) — documentation map
+- [AGENTS.md](AGENTS.md) — entry for AI assistants
 - [DECISIONS.md](DECISIONS.md) — locked project decisions
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — crates and runtime flows
+- [docs/CODE_GUIDE.md](docs/CODE_GUIDE.md) — coding conventions
+- [docs/CODE_REVIEW_GUIDE.md](docs/CODE_REVIEW_GUIDE.md) — PR review checklist
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to contribute
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — community rules
 - [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) — environment variables

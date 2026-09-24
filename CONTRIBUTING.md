@@ -11,6 +11,9 @@ English is required for code, documentation, commit messages, branch names, and 
 1. Read [DECISIONS.md](DECISIONS.md).
 2. Follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 3. Prefer small, focused pull requests.
+4. Skim [docs/CODE_GUIDE.md](docs/CODE_GUIDE.md) and use
+   [docs/CODE_REVIEW_GUIDE.md](docs/CODE_REVIEW_GUIDE.md) before opening a PR.
+5. Full doc map: [docs/INDEX.md](docs/INDEX.md).
 
 ## Development
 
@@ -21,6 +24,7 @@ English is required for code, documentation, commit messages, branch names, and 
 
 ## Code style
 
+- Follow [docs/CODE_GUIDE.md](docs/CODE_GUIDE.md)
 - Prefer clear structure and naming over comments
 - Avoid comments that restate the code
 - Keep protocol changes versioned in `protocol::PROTOCOL_VERSION` when messages become incompatible
@@ -29,6 +33,7 @@ English is required for code, documentation, commit messages, branch names, and 
 
 - Describe the change and how to test it
 - Include env or Docker notes when relevant
+- Self-check against [docs/CODE_REVIEW_GUIDE.md](docs/CODE_REVIEW_GUIDE.md)
 - Contributions should make sense for the reference server and official client; forks may diverge freely under MIT
 
 ## Reporting issues
