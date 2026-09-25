@@ -54,6 +54,21 @@ make start-client  # run native host binary
 
 `make build` runs `build-server` and `build-client`.
 
+### Persistent server (Compose)
+
+Optional. Local/dev can keep using `make start-server` (`docker run`). Compose is
+handy on a VPS for `restart: unless-stopped` and a short command after each
+image update (you can do the same with a longer `docker run`).
+
+```bash
+cp .env.example .env   # set ASTROWAR_HOST_PORT if 8080 is taken
+docker compose -f docker/compose.yaml --project-directory . up -d --build
+curl -fsS http://127.0.0.1:${ASTROWAR_HOST_PORT:-8080}/health
+```
+
+Publishes on `127.0.0.1` by default (`ASTROWAR_PUBLISH_ADDR`). Proxy `/health`
+and `/ws` to that host port. Production hostnames stay out of the repo.
+
 ### Notes
 
 - Client Docker GUI needs `DISPLAY` and X11 (`/tmp/.X11-unix`). On WSL2, WSLg usually provides this.
