@@ -11,6 +11,7 @@
 | `RUST_LOG` | `astrowar_server=info,tower_http=info` | Tracing filter |
 | `ASTROWAR_PUBLISH_ADDR` | `127.0.0.1` | Host address published by Compose (use loopback behind a reverse proxy) |
 | `ASTROWAR_HOST_PORT` | `8080` | Host port mapped to container `8080` |
+| `ASTROWAR_SERVER_IMAGE` | `astrowar-server:local` (dev) | Image reference for Compose; deploy sets `ghcr.io/<owner>/astrowar-server:<tag>` |
 
 ## Client (`astrowar`)
 

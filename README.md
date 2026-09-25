@@ -69,6 +69,10 @@ curl -fsS http://127.0.0.1:${ASTROWAR_HOST_PORT:-8080}/health
 Publishes on `127.0.0.1` by default (`ASTROWAR_PUBLISH_ADDR`). Proxy `/health`
 and `/ws` to that host port. Production hostnames stay out of the repo.
 
+VPS deploys (no git clone) use `docker/compose.deploy.yaml` plus a local `.env`;
+CI on `v*` tags publishes to GHCR and SSHs into that directory. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 ### Notes
 
 - Client Docker GUI needs `DISPLAY` and X11 (`/tmp/.X11-unix`). On WSL2, WSLg usually provides this.
