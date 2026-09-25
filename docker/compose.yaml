@@ -1,7 +1,7 @@
 services:
   astrowar-server:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.server
     image: ${ASTROWAR_SERVER_IMAGE:-astrowar-server:local}
     container_name: astrowar-server
