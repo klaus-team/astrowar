@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY: astrowar
+
+jobs:
+  package:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            runner: ubuntu-latest
+            targets: x86_64-unknown-linux-gnu
+            zip: astrowar-linux-x86_64.zip
+            kind: linux
+          - name: Windows x86_64
+            runner: windows-latest
+            targets: x86_64-pc-windows-msvc
+            zip: astrowar-windows-x86_64.zip
+            kind: windows
+          - name: macOS universal
+            runner: macos-latest
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+            zip: astrowar-macos-universal.zip
+            kind: macos
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.88.0
+          targets: ${{ matrix.targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.kind }}
+
+      - name: Install Linux dependencies
+        if: matrix.kind == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libssl-dev \
+            libasound2-dev \
+            libudev-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxrandr-dev \
+            zip
+
+      - name: Build (Linux / Windows)
+        if: matrix.kind != 'macos'
+        env:
+          ASTROWAR_DEFAULT_SERVER_URL: ${{ secrets.ASTROWAR_DEFAULT_SERVER_URL }}
+        run: cargo build --locked --release --package astrowar --target ${{ matrix.targets }}
+
+      - name: Build (macOS universal)
+        if: matrix.kind == 'macos'
+        env:
+          ASTROWAR_DEFAULT_SERVER_URL: ${{ secrets.ASTROWAR_DEFAULT_SERVER_URL }}
+        run: |
+          cargo build --locked --release --package astrowar --target aarch64-apple-darwin
+          cargo build --locked --release --package astrowar --target x86_64-apple-darwin
+          lipo -create -output "${{ runner.temp }}/astrowar" \
+            target/aarch64-apple-darwin/release/astrowar \
+            target/x86_64-apple-darwin/release/astrowar
+
+      - name: Package zip (Linux)
+        if: matrix.kind == 'linux'
+        run: |
+          staging="${{ runner.temp }}/stage"
+          mkdir -p "$staging"
+          cp "target/${{ matrix.targets }}/release/${{ env.BINARY }}" "$staging/"
+          cp LICENSE "$staging/"
+          (cd "$staging" && zip -r "${{ github.workspace }}/${{ matrix.zip }}" .)
+
+      - name: Package zip (Windows)
+        if: matrix.kind == 'windows'
+        shell: pwsh
+        run: |
+          $staging = Join-Path $env:RUNNER_TEMP "stage"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          Copy-Item "target/${{ matrix.targets }}/release/${{ env.BINARY }}.exe" $staging
+          Copy-Item LICENSE $staging
+          Compress-Archive -Path (Join-Path $staging '*') -DestinationPath "${{ matrix.zip }}" -Force
+
+      - name: Package zip (macOS)
+        if: matrix.kind == 'macos'
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          staging="${{ runner.temp }}/stage"
+          app="$staging/AstroWar.app"
+          mkdir -p "$app/Contents/MacOS"
+          cp "${{ runner.temp }}/astrowar" "$app/Contents/MacOS/${{ env.BINARY }}"
+          plist="$app/Contents/Info.plist"
+          /usr/bin/plutil -create xml1 "$plist"
+          /usr/bin/plutil -insert CFBundleExecutable -string "${{ env.BINARY }}" "$plist"
+          /usr/bin/plutil -insert CFBundleIdentifier -string "com.astrowar.client" "$plist"
+          /usr/bin/plutil -insert CFBundleName -string "AstroWar" "$plist"
+          /usr/bin/plutil -insert CFBundlePackageType -string "APPL" "$plist"
+          /usr/bin/plutil -insert CFBundleShortVersionString -string "$version" "$plist"
+          /usr/bin/plutil -insert CFBundleVersion -string "$version" "$plist"
+          /usr/bin/plutil -insert LSMinimumSystemVersion -string "11.0" "$plist"
+          cp LICENSE "$staging/"
+          (cd "$staging" && zip -r "${{ github.workspace }}/${{ matrix.zip }}" .)
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.zip }}
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

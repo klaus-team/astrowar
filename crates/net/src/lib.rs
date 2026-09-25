@@ -24,8 +24,17 @@ pub enum NetError {
 }
 
 pub fn default_server_url() -> String {
-    std::env::var("ASTROWAR_DEFAULT_SERVER_URL")
-        .unwrap_or_else(|_| "ws://127.0.0.1:8080/ws".to_string())
+    if let Ok(url) = std::env::var("ASTROWAR_DEFAULT_SERVER_URL") {
+        if !url.is_empty() {
+            return url;
+        }
+    }
+    if let Some(url) = option_env!("ASTROWAR_DEFAULT_SERVER_URL") {
+        if !url.is_empty() {
+            return url.to_string();
+        }
+    }
+    "ws://127.0.0.1:8080/ws".to_string()
 }
 
 pub struct Client {
