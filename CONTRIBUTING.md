@@ -49,11 +49,16 @@ English is required for code, documentation, commit messages, branch names, and 
   and git tag `vX.Y.Z`. Releases and the server image publish should key off that tag only.
 
   Pushing a `v*` tag runs `.github/workflows/release.yml`, which attaches portable
-  client zips to the GitHub Release:
+  client zips and unsigned installers to the GitHub Release:
 
   - `astrowar-linux-x86_64.zip`
+  - `astrowar_<version>_amd64.deb`
+  - `astrowar-<version>-1.x86_64.rpm`
+  - `astrowar-<version>-1-x86_64.pkg.tar.zst` (Arch Linux; Omarchy uses the same pacman package)
   - `astrowar-windows-x86_64.zip`
+  - `astrowar-windows-x86_64-setup.exe` (per-user Inno Setup installer)
   - `astrowar-macos-universal.zip` (`.app` + `LICENSE`)
+  - `astrowar-macos-universal.dmg`
 
   Official builds embed the default relay URL from the repository secret
   `ASTROWAR_DEFAULT_SERVER_URL` at compile time (runtime env still overrides).

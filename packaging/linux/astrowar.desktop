@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=AstroWar
+Comment=Multiplayer arcade shooter
+Exec=astrowar
+Terminal=false
+Categories=Game;
