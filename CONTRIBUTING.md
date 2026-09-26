@@ -59,6 +59,26 @@ English is required for code, documentation, commit messages, branch names, and 
   `ASTROWAR_DEFAULT_SERVER_URL` at compile time (runtime env still overrides).
   If the secret is unset, the client falls back to `ws://127.0.0.1:8080/ws`.
 
+  The same `v*` tag also runs `.github/workflows/deploy-server.yml`: publish
+  `ghcr.io/<owner>/astrowar-server:<tag>` (and `:latest`), then SSH to the VPS to
+  update `ASTROWAR_SERVER_IMAGE`, `docker compose pull`, and restart when these
+  Actions secrets are set:
+
+  | Secret | Purpose |
+  | ------ | ------- |
+  | `VPS_HOST` | SSH host |
+  | `VPS_USER` | SSH user |
+  | `VPS_SSH_KEY` | Private key |
+  | `VPS_DEPLOY_PATH` | Directory on the VPS that holds `compose.yaml` + `.env` |
+  | `VPS_SSH_FINGERPRINT` | Optional host key fingerprint |
+
+  One-time on the VPS (no git clone): create `VPS_DEPLOY_PATH`, copy
+  `docker/compose.deploy.yaml` as `compose.yaml` manually (re-copy only when that
+  file changes), and a local `.env` with at least `ASTROWAR_HOST_PORT` (and
+  `ASTROWAR_PUBLISH_ADDR=127.0.0.1`). CI only updates `ASTROWAR_SERVER_IMAGE` and
+  restarts the container. Prefer a **public** GHCR package so the VPS can
+  `docker pull` without a registry token.
+
   If `main` is branch-protected, allow `github-actions[bot]` to push (or use a
   fine-grained PAT stored as a secret) so the bump commit can land.
 

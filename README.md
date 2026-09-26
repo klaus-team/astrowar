@@ -69,11 +69,17 @@ curl -fsS http://127.0.0.1:${ASTROWAR_HOST_PORT:-8080}/health
 Publishes on `127.0.0.1` by default (`ASTROWAR_PUBLISH_ADDR`). Proxy `/health`
 and `/ws` to that host port. Production hostnames stay out of the repo.
 
+VPS deploys (no git clone): keep `docker/compose.deploy.yaml` as `compose.yaml`
+and a local `.env` on the server (update compose manually when it changes). CI on
+`v*` tags publishes to GHCR, sets `ASTROWAR_SERVER_IMAGE`, pulls, and restarts.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ### Notes
 
 - Client Docker GUI needs `DISPLAY` and X11 (`/tmp/.X11-unix`). On WSL2, WSLg usually provides this.
 - macOS/Windows hosts: use Docker for **server** only; client build/run via Linux CI artifacts or WSL2 until native pipelines exist.
-- Default WebSocket URL: `ws://127.0.0.1:8080/ws` (see `.env.example`).
+- Default client WebSocket URL is `ws://127.0.0.1:8080/ws` unless overridden at
+  runtime or baked via the Actions secret `ASTROWAR_DEFAULT_SERVER_URL`.
 
 ## Documentation
 
