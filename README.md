@@ -69,9 +69,10 @@ curl -fsS http://127.0.0.1:${ASTROWAR_HOST_PORT:-8080}/health
 Publishes on `127.0.0.1` by default (`ASTROWAR_PUBLISH_ADDR`). Proxy `/health`
 and `/ws` to that host port. Production hostnames stay out of the repo.
 
-VPS deploys (no git clone) use `docker/compose.deploy.yaml` plus a local `.env`;
-CI on `v*` tags publishes to GHCR and SSHs into that directory. See
-[CONTRIBUTING.md](CONTRIBUTING.md).
+VPS deploys (no git clone): keep `docker/compose.deploy.yaml` as `compose.yaml`
+and a local `.env` on the server (update compose manually when it changes). CI on
+`v*` tags publishes to GHCR, sets `ASTROWAR_SERVER_IMAGE`, pulls, and restarts.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Notes
 

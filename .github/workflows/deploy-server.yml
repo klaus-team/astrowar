@@ -101,23 +101,7 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v4
-        if: steps.gate.outputs.skip != 'true'
-
-      - name: Upload compose file
-        if: steps.gate.outputs.skip != 'true'
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          fingerprint: ${{ secrets.VPS_SSH_FINGERPRINT }}
-          source: docker/compose.deploy.yaml
-          target: ${{ secrets.VPS_DEPLOY_PATH }}
-          strip_components: 1
-          overwrite: true
-
-      - name: Pull and restart
+      - name: Pull image and restart
         if: steps.gate.outputs.skip != 'true'
         uses: appleboy/ssh-action@v1.2.0
         env:
@@ -132,11 +116,7 @@ jobs:
           script: |
             set -euo pipefail
             cd "$DEPLOY_PATH"
-            if [ -f compose.deploy.yaml ] && [ ! -f compose.yaml ]; then
-              mv compose.deploy.yaml compose.yaml
-            elif [ -f compose.deploy.yaml ]; then
-              mv -f compose.deploy.yaml compose.yaml
-            fi
+            test -f compose.yaml
             touch .env
             if grep -q '^ASTROWAR_SERVER_IMAGE=' .env; then
               sed -i.bak "s|^ASTROWAR_SERVER_IMAGE=.*|ASTROWAR_SERVER_IMAGE=${IMAGE}|" .env
@@ -149,6 +129,6 @@ jobs:
             docker image prune -f
             set -a
             # shellcheck disable=SC1091
-            [ -f .env ] && . ./.env
+            . ./.env
             set +a
             curl -fsS "http://${ASTROWAR_PUBLISH_ADDR:-127.0.0.1}:${ASTROWAR_HOST_PORT:-8080}/health"
