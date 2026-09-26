@@ -70,7 +70,7 @@ Section: games
 Priority: optional
 Architecture: amd64
 Maintainer: AstroWar Maintainers <noreply@users.noreply.github.com>
-Homepage: https://github.com/klaus-team/astrowar
+Homepage: https://github.com/pauloklaus/astrowar
 Depends: ${depends}
 Description: Multiplayer arcade shooter
  Native client. Rooms are joined through a central relay.
@@ -90,7 +90,7 @@ Version: @VERSION@
 Release: 1
 Summary: Multiplayer arcade shooter
 License: MIT
-URL: https://github.com/klaus-team/astrowar
+URL: https://github.com/pauloklaus/astrowar
 BuildArch: x86_64
 
 %global __os_install_post %{nil}
@@ -132,7 +132,7 @@ pkgname = astrowar
 pkgbase = astrowar
 pkgver = ${version}-1
 pkgdesc = Multiplayer arcade shooter
-url = https://github.com/klaus-team/astrowar
+url = https://github.com/pauloklaus/astrowar
 builddate = $(date +%s)
 packager = AstroWar Maintainers <noreply@users.noreply.github.com>
 size = ${size}
