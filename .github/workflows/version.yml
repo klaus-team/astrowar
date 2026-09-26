@@ -23,6 +23,7 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          token: ${{ secrets.ASTROWAR_RELEASE_PUSH_TOKEN }}
 
       - name: Skip when title does not bump
         id: gate
