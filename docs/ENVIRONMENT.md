@@ -11,7 +11,7 @@
 | `RUST_LOG` | `astrowar_server=info,tower_http=info` | Tracing filter |
 | `ASTROWAR_PUBLISH_ADDR` | `127.0.0.1` | Host address published by Compose (use loopback behind a reverse proxy) |
 | `ASTROWAR_HOST_PORT` | `8080` | Host port mapped to container `8080` |
-| `ASTROWAR_SERVER_IMAGE` | `astrowar-server:local` (dev) | Image reference for Compose; deploy sets `ghcr.io/<owner>/astrowar-server:<tag>` |
+| `ASTROWAR_SERVER_IMAGE` | `astrowar-server:local` (dev) | Image reference for Compose; on a server set `ghcr.io/klaus-team/astrowar-server:<tag>` before `docker compose pull` |
 
 ## Client (`astrowar`)
 
@@ -19,7 +19,7 @@
 |----------|---------|-------------|
 | `ASTROWAR_DEFAULT_SERVER_URL` | `ws://127.0.0.1:8080/ws` | Runtime override, else compile-time `option_env!`, else this default |
 
-Not part of `.env.example` / VPS Compose. Official release builds bake the default from
+Not part of `.env.example` / Server Compose. Official release builds bake the default from
 the GitHub Actions secret `ASTROWAR_DEFAULT_SERVER_URL`; locally you may export the
 same name when running the client (or override the URL in the UI). A non-empty
 runtime env still wins over the compile-time value.

@@ -57,7 +57,7 @@ make start-client  # run native host binary
 ### Persistent server (Compose)
 
 Optional. Local/dev can keep using `make start-server` (`docker run`). Compose is
-handy on a VPS for `restart: unless-stopped` and a short command after each
+handy on a server for `restart: unless-stopped` and a short command after each
 image update (you can do the same with a longer `docker run`).
 
 ```bash
@@ -69,9 +69,10 @@ curl -fsS http://127.0.0.1:${ASTROWAR_HOST_PORT:-8080}/health
 Publishes on `127.0.0.1` by default (`ASTROWAR_PUBLISH_ADDR`). Proxy `/health`
 and `/ws` to that host port. Production hostnames stay out of the repo.
 
-VPS deploys (no git clone): keep `docker/compose.deploy.yaml` as `compose.yaml`
+Server deploys (no git clone): keep `docker/compose.deploy.yaml` as `compose.yaml`
 and a local `.env` on the server (update compose manually when it changes). CI on
-`v*` tags publishes to GHCR, sets `ASTROWAR_SERVER_IMAGE`, pulls, and restarts.
+`v*` tags only publishes the image to GHCR. Set `ASTROWAR_SERVER_IMAGE` to that
+tag, then `docker compose pull` and `docker compose up -d` on the host.
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Notes
