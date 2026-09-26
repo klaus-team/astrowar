@@ -65,7 +65,12 @@ jobs:
             libxcursor-dev \
             libxi-dev \
             libxrandr-dev \
-            zip
+            zip \
+            dpkg-dev \
+            rpm \
+            libarchive-tools \
+            zstd \
+            binutils
 
       - name: Build (Linux / Windows)
         if: matrix.kind != 'macos'
@@ -93,6 +98,16 @@ jobs:
           cp LICENSE "$staging/"
           (cd "$staging" && zip -r "${{ github.workspace }}/${{ matrix.zip }}" .)
 
+      - name: Package installers (Linux)
+        if: matrix.kind == 'linux'
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          bash packaging/linux/package.sh \
+            "$version" \
+            "target/${{ matrix.targets }}/release/${{ env.BINARY }}" \
+            LICENSE \
+            "${{ github.workspace }}"
+
       - name: Package zip (Windows)
         if: matrix.kind == 'windows'
         shell: pwsh
@@ -102,6 +117,21 @@ jobs:
           Copy-Item "target/${{ matrix.targets }}/release/${{ env.BINARY }}.exe" $staging
           Copy-Item LICENSE $staging
           Compress-Archive -Path (Join-Path $staging '*') -DestinationPath "${{ matrix.zip }}" -Force
+
+      - name: Package installer (Windows)
+        if: matrix.kind == 'windows'
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) { exit $LASTEXITCODE }
+          $version = "${env:GITHUB_REF_NAME}".TrimStart("v")
+          $stage = Join-Path $env:GITHUB_WORKSPACE "packaging-stage"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "target/${{ matrix.targets }}/release/${{ env.BINARY }}.exe" $stage
+          Copy-Item LICENSE $stage
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          & $iscc "/DAppVersion=$version" "/DSourceDir=$stage" "/DOutputDir=$env:GITHUB_WORKSPACE" "packaging\windows\astrowar.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Package zip (macOS)
         if: matrix.kind == 'macos'
@@ -123,10 +153,44 @@ jobs:
           cp LICENSE "$staging/"
           (cd "$staging" && zip -r "${{ github.workspace }}/${{ matrix.zip }}" .)
 
+      - name: Package installer (macOS)
+        if: matrix.kind == 'macos'
+        run: |
+          set -euo pipefail
+          dmg_root="${{ runner.temp }}/dmg"
+          rm -rf "$dmg_root"
+          mkdir -p "$dmg_root"
+          cp -R "${{ runner.temp }}/stage/AstroWar.app" "$dmg_root/"
+          cp LICENSE "$dmg_root/"
+          ln -s /Applications "$dmg_root/Applications"
+          hdiutil create -volname "AstroWar" -srcfolder "$dmg_root" -ov -format UDZO \
+            "${{ github.workspace }}/astrowar-macos-universal.dmg"
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          shopt -s nullglob
+          files=(
+            astrowar-*.zip
+            astrowar_*_amd64.deb
+            astrowar-*.rpm
+            astrowar-*.pkg.tar.zst
+            astrowar-*-setup.exe
+            astrowar-*.dmg
+          )
+          if ((${#files[@]} == 0)); then
+            echo "no release assets found" >&2
+            exit 1
+          fi
+          mv "${files[@]}" release-assets/
+          ls -l release-assets
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.zip }}
+          files: release-assets/*
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
