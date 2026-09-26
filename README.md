@@ -77,7 +77,8 @@ CI on `v*` tags publishes to GHCR and SSHs into that directory. See
 
 - Client Docker GUI needs `DISPLAY` and X11 (`/tmp/.X11-unix`). On WSL2, WSLg usually provides this.
 - macOS/Windows hosts: use Docker for **server** only; client build/run via Linux CI artifacts or WSL2 until native pipelines exist.
-- Default WebSocket URL: `ws://127.0.0.1:8080/ws` (see `.env.example`).
+- Default client WebSocket URL is `ws://127.0.0.1:8080/ws` unless overridden at
+  runtime or baked via the Actions secret `ASTROWAR_DEFAULT_SERVER_URL`.
 
 ## Documentation
 
