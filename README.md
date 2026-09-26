@@ -66,7 +66,7 @@ docker compose -f docker/compose.yaml --project-directory . up -d --build
 curl -fsS http://127.0.0.1:${ASTROWAR_HOST_PORT:-8080}/health
 ```
 
-Publishes on `127.0.0.1` by default (`ASTROWAR_PUBLISH_ADDR`). Proxy `/health`
+Publishes on `127.0.0.1` by default (`ASTROWAR_HOST_ADDR`). Proxy `/health`
 and `/ws` to that host port. Production hostnames stay out of the repo.
 
 Server deploys (no git clone): keep `docker/compose.deploy.yaml` as `compose.yaml`

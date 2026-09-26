@@ -4,10 +4,10 @@ services:
     container_name: astrowar-server
     restart: unless-stopped
     ports:
-      - "${ASTROWAR_PUBLISH_ADDR:-127.0.0.1}:${ASTROWAR_HOST_PORT:-8080}:8080"
+      - "${ASTROWAR_HOST_ADDR:-127.0.0.1}:${ASTROWAR_HOST_PORT:-8080}:${ASTROWAR_SERVER_PORT:-8080}"
     environment:
-      ASTROWAR_SERVER_HOST: "0.0.0.0"
-      ASTROWAR_SERVER_PORT: "8080"
+      ASTROWAR_SERVER_HOST: ${ASTROWAR_SERVER_HOST:-0.0.0.0}
+      ASTROWAR_SERVER_PORT: ${ASTROWAR_SERVER_PORT:-8080}"
       ASTROWAR_ROOM_CODE_LENGTH: ${ASTROWAR_ROOM_CODE_LENGTH:-6}
       ASTROWAR_ROOM_TTL_SECS: ${ASTROWAR_ROOM_TTL_SECS:-3600}
       RUST_LOG: ${RUST_LOG:-astrowar_server=info,tower_http=info}
